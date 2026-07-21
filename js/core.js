@@ -39,7 +39,7 @@ function clearAllAppData() {
         if (confirm('确定要清除当前会话的所有消息吗？此操作无法恢复！')) {
             messages = [];
             window.messages = messages; // 双保险：同步 window 属性
-            displayedMessageCount = HISTORY_BATCH_SIZE;
+            displayedMessageCount = Math.min(100, messages.length || HISTORY_BATCH_SIZE);
 
             // 立即清除 localStorage 备份，防止 _tryRecoverFromBackup 在 IndexedDB 写入前恢复旧消息
             try { localStorage.removeItem('BACKUP_V1_critical'); } catch(e) {}
@@ -73,7 +73,6 @@ function clearAllAppData() {
 }
 
 function loadMoreHistory() {
-    const historyLoader = document.getElementById('history-loader');
     const container = DOMElements && DOMElements.chatContainer;
     const currentOldestMsgIndex = messages.length - displayedMessageCount;
 
@@ -81,14 +80,26 @@ function loadMoreHistory() {
     if (isLoadingHistory) return;
 
     if (currentOldestMsgIndex <= 0) {
-        if (historyLoader) historyLoader.style.display = 'none';
+        // 移除按钮
+        const btn = container.querySelector('.load-more-btn-wrapper');
+        if (btn) btn.remove();
         return;
     }
 
     isLoadingHistory = true;
-    if (historyLoader) historyLoader.style.display = 'flex';
 
-    const visibleWrappers = Array.from(container.querySelectorAll('.message-wrapper'));
+    // 更新按钮文字为加载中
+    const btnWrapper = container.querySelector('.load-more-btn-wrapper');
+    if (btnWrapper) {
+        btnWrapper.innerHTML = `
+            <div style="display:inline-block;padding:8px 20px;border-radius:20px;background:var(--text-secondary);color:#fff;font-size:13px;opacity:0.7;">
+                <i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>
+                加载中...
+            </div>
+        `;
+    }
+
+    const visibleWrappers = Array.from(container.querySelectorAll('.message-wrapper:not(.load-more-btn-wrapper)'));
     const firstVisible = visibleWrappers.find(function(el) {
         return el.offsetTop + el.offsetHeight >= container.scrollTop;
     }) || visibleWrappers[0] || null;
@@ -125,8 +136,21 @@ function loadMoreHistory() {
                 container.style.overflow = prevOverflow || '';
                 container.style.scrollBehavior = prevScrollBehavior || '';
 
-                if (historyLoader) {
-                    historyLoader.style.display = (messages.length > displayedMessageCount) ? 'flex' : 'none';
+                // 🔥 检查是否还有更多消息
+                const remaining = messages.length - displayedMessageCount;
+                const btnW = container.querySelector('.load-more-btn-wrapper');
+                if (remaining > 0 && btnW) {
+                    btnW.innerHTML = `
+                        <div style="display:inline-block;cursor:pointer;padding:8px 20px;border-radius:20px;background:var(--accent-color);color:#fff;font-size:13px;font-weight:500;transition:all 0.2s;box-shadow:0 2px 8px rgba(var(--accent-color-rgb),0.3);" 
+                             onclick="loadMoreHistory()"
+                             onmouseover="this.style.transform='scale(1.03)';this.style.boxShadow='0 4px 16px rgba(var(--accent-color-rgb),0.5)';"
+                             onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 2px 8px rgba(var(--accent-color-rgb),0.3)';">
+                            <i class="fas fa-chevron-up" style="margin-right:6px;"></i>
+                            加载更早的消息 (还有 ${remaining} 条)
+                        </div>
+                    `;
+                } else if (btnW) {
+                    btnW.remove();
                 }
                 isLoadingHistory = false;
             });
@@ -278,105 +302,106 @@ const applyBackground = (value) => {
     }
 };
 
+async function migrateToSeparatedStorage() {
+    const migrationFlag = await localforage.getItem('MIGRATION_SEPARATED_V1');
+    if (migrationFlag) return;
 
+    console.log('🔄 开始迁移数据到分离存储...');
+    
+    try {
+        // 检查旧数据是否存在
+        const oldSettings = await localforage.getItem('chatSettings');
+        const oldMessages = await localforage.getItem('chatMessages');
+        const oldReplies = await localforage.getItem('customReplies');
+        // ... 其他旧数据
+
+        // 如果旧数据存在，直接使用（已经是用 key 存储的）
+        // 不需要额外迁移，只需标记完成
+        
+        await localforage.setItem('MIGRATION_SEPARATED_V1', 'true');
+        console.log('✅ 数据迁移完成');
+    } catch (e) {
+        console.error('❌ 数据迁移失败:', e);
+    }
+}
 const loadData = async () => {
     try {
         settings = getDefaultSettings();
 
-        
-        const results = await Promise.allSettled([
-            localforage.getItem(getStorageKey('chatSettings')),
-            localforage.getItem(getStorageKey('chatMessages')),
-            localforage.getItem(getStorageKey('backgroundGallery')),
-            localforage.getItem(getStorageKey('customReplies')),
-            localforage.getItem(getStorageKey('customPokes')),
-            localforage.getItem(getStorageKey('customStatuses')),
-            localforage.getItem(getStorageKey('customMottos')),
-            localforage.getItem(getStorageKey('customIntros')),
-            localforage.getItem(getStorageKey('anniversaries')),
-            localforage.getItem(getStorageKey('stickerLibrary')),
-            localforage.getItem(`${APP_PREFIX}customThemes`),
-            localforage.getItem(getStorageKey('chatBackground')),
-            localforage.getItem(getStorageKey('partnerAvatar')),
-            localforage.getItem(getStorageKey('myAvatar')),
-            localforage.getItem(getStorageKey('partnerPersonas')), 
-            localforage.getItem(getStorageKey('showPartnerNameInChat')),
-            localforage.getItem(`${APP_PREFIX}themeSchemes`),
-            localforage.getItem(getStorageKey('myStickerLibrary')),
-            localforage.getItem(getStorageKey('customReplyGroups')),
-            localforage.getItem(getStorageKey('customPokeGroups')),
-            localforage.getItem(getStorageKey('customStatusGroups')),
-            localforage.getItem(getStorageKey('customReverseQuestions')),
+        // ===== 分离加载：每个数据独立读取 =====
+        const [
+            savedSettings,
+            savedMessages,
+            savedBgGallery,
+            savedCustomReplies,
+            savedPokes,
+            savedStatuses,
+            savedMottos,
+            savedIntros,
+            savedAnniversaries,
+            savedStickers,
+            savedCustomThemes,
+            savedChatBg,
+            partnerAvatarSrc,
+            myAvatarSrc,
+            savedPartnerPersonas,
+            savedShowNameConfig,
+            savedThemeSchemes,
+            savedMyStickers,
+            savedReplyGroups,
+            savedPokeGroups,
+            savedStatusGroups,
+            savedReverseQuestions,
+            savedBgGalleryFallback,
+            savedEmojis,
+        ] = await Promise.all([
+            safeLoad(getStorageKey('chatSettings'), null),
+            safeLoad(getStorageKey('chatMessages'), null),
+            safeLoad(getStorageKey('backgroundGallery'), null),
+            safeLoad(getStorageKey('customReplies'), null),
+            safeLoad(getStorageKey('customPokes'), null),
+            safeLoad(getStorageKey('customStatuses'), null),
+            safeLoad(getStorageKey('customMottos'), null),
+            safeLoad(getStorageKey('customIntros'), null),
+            safeLoad(getStorageKey('anniversaries'), null),
+            safeLoad(getStorageKey('stickerLibrary'), null),
+            safeLoad(`${APP_PREFIX}customThemes`, null),
+            safeLoad(getStorageKey('chatBackground'), null),
+            safeLoad(getStorageKey('partnerAvatar'), null),
+            safeLoad(getStorageKey('myAvatar'), null),
+            safeLoad(getStorageKey('partnerPersonas'), null),
+            safeLoad(getStorageKey('showPartnerNameInChat'), null),
+            safeLoad(`${APP_PREFIX}themeSchemes`, null),
+            safeLoad(getStorageKey('myStickerLibrary'), null),
+            safeLoad(getStorageKey('customReplyGroups'), null),
+            safeLoad(getStorageKey('customPokeGroups'), null),
+            safeLoad(getStorageKey('customStatusGroups'), null),
+            safeLoad(getStorageKey('customReverseQuestions'), null),
+            // 兼容旧版背景图库
+            safeLoad(getStorageKey('backgroundGallery'), null),
+            safeLoad(getStorageKey('customEmojis'), null),
         ]);
-        const getVal = (index) => results[index].status === 'fulfilled' ? results[index].value : null;
 
-        const savedSettings = getVal(0);
-        const savedMessages = getVal(1);
-        const savedBgGallery = getVal(2);
-        const savedCustomReplies = getVal(3);
-        const savedPokes = getVal(4);
-        const savedStatuses = getVal(5);
-        const savedMottos = getVal(6);
-        const savedIntros = getVal(7);
-        const savedAnniversaries = getVal(8);
-        const savedStickers = getVal(9);
-        const savedCustomThemes = getVal(10);
-        const savedChatBg = getVal(11);
-        const partnerAvatarSrc = getVal(12);
-        const myAvatarSrc = getVal(13);
-        const savedPartnerPersonas = getVal(14);
-        const savedShowNameConfig = getVal(15);
-        const savedThemeSchemes = getVal(16);
-        const savedMyStickers = getVal(17);
-        const savedReplyGroups = getVal(18);
-        const savedPokeGroups = getVal(19);
-        const savedStatusGroups = getVal(20);
-// 单独读取 customReverseQuestions
-const savedReverseQuestions = await localforage.getItem(getStorageKey('customReverseQuestions'));
-if (savedReverseQuestions) {
-    customReverseQuestions = savedReverseQuestions;
-    window.customReverseQuestions = customReverseQuestions; // 添加这行
-}
-
-        if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
-
-        if (savedSettings) Object.assign(settings, savedSettings);
-
-        if (settings.showPartnerNameInChat !== undefined) {
-            showPartnerNameInChat = settings.showPartnerNameInChat;
-        } else if (savedShowNameConfig !== null) {
-            showPartnerNameInChat = savedShowNameConfig;
+        // 应用设置
+        if (savedSettings) {
+            Object.assign(settings, savedSettings);
         }
-        document.body.classList.toggle('show-partner-name', showPartnerNameInChat);
-        try {
-            if (settings.customFontUrl) applyCustomFont(settings.customFontUrl);
-            if (settings.customBubbleCss) applyCustomBubbleCss(settings.customBubbleCss);
-            if (settings.customGlobalCss) applyGlobalThemeCss(settings.customGlobalCss);
-        } catch(e) { console.warn("样式应用失败", e); }
-        
-        if (savedPokes) customPokes = savedPokes;
-        else customPokes = [...CONSTANTS.POKE_ACTIONS];
 
-        if (savedStatuses) customStatuses = savedStatuses;
-        else customStatuses = [...CONSTANTS.PARTNER_STATUSES];
-
-        if (savedMottos) customMottos = savedMottos;
-        else customMottos = [...CONSTANTS.HEADER_MOTTOS];
-        
-        if (savedIntros) customIntros = savedIntros;
-        else customIntros = CONSTANTS.WELCOME_ANIMATIONS.map(a => `${a.line1}|${a.line2}`);
-
-        if (savedMessages && Array.isArray(savedMessages)) {
+        // 加载消息
+        if (savedMessages && Array.isArray(savedMessages) && savedMessages.length > 0) {
             messages = savedMessages.map(m => ({
-                ...m, timestamp: new Date(m.timestamp)
+                ...m,
+                timestamp: new Date(m.timestamp)
             }));
         } else {
+            // 尝试从备份恢复
             const backup = _tryRecoverFromBackup();
             if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
                 const timeSince = Math.round((Date.now() - backup.ts) / 60000);
                 console.warn(`[loadData] 主存储无消息，正在从备份恢复（备份时间：${timeSince} 分钟前）`);
                 messages = backup.messages.map(m => ({
-                    ...m, timestamp: new Date(m.timestamp)
+                    ...m,
+                    timestamp: new Date(m.timestamp)
                 }));
                 if (backup.settings) Object.assign(settings, backup.settings);
                 if (backup.anniversaries && Array.isArray(backup.anniversaries)) {
@@ -392,8 +417,11 @@ if (savedReverseQuestions) {
             }
         }
 
+        // 加载其他数据
         if (savedBgGallery) {
             savedBackgrounds = savedBgGallery;
+        } else if (savedBgGalleryFallback) {
+            savedBackgrounds = savedBgGalleryFallback;
         } else {
             savedBackgrounds = [{ id: 'preset-1', type: 'color', value: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)' }];
         }
@@ -407,37 +435,116 @@ if (savedReverseQuestions) {
         if (savedMyStickers) myStickerLibrary = savedMyStickers;
         if (savedCustomThemes) customThemes = savedCustomThemes;
         if (savedThemeSchemes) themeSchemes = savedThemeSchemes;
-        try { const ce = await localforage.getItem(getStorageKey('customEmojis')); if (ce && Array.isArray(ce)) customEmojis = ce; } catch(e) {}
-        window._customReplies = customReplies;
-        window._CONSTANTS = CONSTANTS;
+        if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
+        if (savedReverseQuestions) customReverseQuestions = savedReverseQuestions;
 
+// ===== 🔥 新增：加载氛围感数据到内存 =====
+if (savedPokes && savedPokes.length > 0) {
+    customPokes = savedPokes;
+    console.log('✅ 加载 customPokes:', customPokes.length, '条');
+}
+if (savedStatuses && savedStatuses.length > 0) {
+    customStatuses = savedStatuses;
+    console.log('✅ 加载 customStatuses:', customStatuses.length, '条');
+}
+if (savedMottos && savedMottos.length > 0) {
+    customMottos = savedMottos;
+    console.log('✅ 加载 customMottos:', customMottos.length, '条');
+}
+if (savedIntros && savedIntros.length > 0) {
+    customIntros = savedIntros;
+    console.log('✅ 加载 customIntros:', customIntros.length, '条');
+}
+if (savedEmojis && savedEmojis.length > 0) {
+    customEmojis = savedEmojis;
+    console.log('✅ 加载 customEmojis:', customEmojis.length, '条');
+}
+
+        // 显示名字配置
+        if (settings.showPartnerNameInChat !== undefined) {
+            showPartnerNameInChat = settings.showPartnerNameInChat;
+        } else if (savedShowNameConfig !== null) {
+            showPartnerNameInChat = savedShowNameConfig;
+        }
+        document.body.classList.toggle('show-partner-name', showPartnerNameInChat);
+
+      // 🔥 恢复默认数据（仅当没有保存的数据时）
+if ((!savedPokes || savedPokes.length === 0) && (!customPokes || customPokes.length === 0)) {
+    customPokes = [...CONSTANTS.POKE_ACTIONS];
+}
+if ((!savedStatuses || savedStatuses.length === 0) && (!customStatuses || customStatuses.length === 0)) {
+    customStatuses = [...CONSTANTS.PARTNER_STATUSES];
+}
+if ((!savedMottos || savedMottos.length === 0) && (!customMottos || customMottos.length === 0)) {
+    customMottos = [...CONSTANTS.HEADER_MOTTOS];
+}
+if ((!savedIntros || savedIntros.length === 0) && (!customIntros || customIntros.length === 0)) {
+    customIntros = CONSTANTS.WELCOME_ANIMATIONS.map(a => `${a.line1}|${a.line2}`);
+}
+if ((!savedEmojis || savedEmojis.length === 0) && customEmojis.length === 0) {
+    customEmojis = ['❤️', '😊', '✨', '🌙', '🌸'];  // 默认 Emoji
+}
+
+        // 应用样式
+        try {
+            if (settings.customFontUrl) applyCustomFont(settings.customFontUrl);
+            if (settings.customBubbleCss) applyCustomBubbleCss(settings.customBubbleCss);
+            if (settings.customGlobalCss) applyGlobalThemeCss(settings.customGlobalCss);
+        } catch (e) {
+            console.warn("样式应用失败", e);
+        }
+
+        // 更新头像
         if (DOMElements && DOMElements.partner && DOMElements.me) {
             updateAvatar(DOMElements.partner.avatar, partnerAvatarSrc);
             updateAvatar(DOMElements.me.avatar, myAvatarSrc);
         }
 
+        // 应用背景
         if (savedChatBg) {
             applyBackground(savedChatBg);
         } else {
             const lsBg = safeGetItem(getStorageKey('chatBackground'));
             if (lsBg) {
                 applyBackground(lsBg);
-                localforage.setItem(getStorageKey('chatBackground'), lsBg);
+                await safeStore(getStorageKey('chatBackground'), lsBg);
             }
         }
 
-        try { await initMoodData(); } catch(e) { console.warn("心情数据加载失败", e); }
-        try { await loadEnvelopeData(); } catch(e) { console.warn("信封数据加载失败", e); }
-        
-        displayedMessageCount = HISTORY_BATCH_SIZE;
-        
+        // 初始化其他模块
+        try { await initMoodData(); } catch (e) { console.warn("心情数据加载失败", e); }
+        try { await loadEnvelopeData(); } catch (e) { console.warn("信封数据加载失败", e); }
+
+        displayedMessageCount = Math.min(100, messages.length || HISTORY_BATCH_SIZE);
+
+        // ===== 🔥 新增：从 localStorage 备份恢复反向问题库 =====
+        try {
+            const backupKey = 'BACKUP_customReverseQuestions';
+            const backupData = localStorage.getItem(backupKey);
+            if (backupData) {
+                const parsed = JSON.parse(backupData);
+                if (Array.isArray(parsed) && parsed.length > 0 && 
+                    (!customReverseQuestions || customReverseQuestions.length === 0)) {
+                    customReverseQuestions = parsed;
+                    // 保存到 IndexedDB
+                    await safeStore(getStorageKey('customReverseQuestions'), parsed);
+                    console.log('✅ 从 localStorage 备份恢复反向问题库:', parsed.length, '条');
+                    // 清除 localStorage 备份（已恢复）
+                    localStorage.removeItem(backupKey);
+                }
+            }
+        } catch (e) {
+            console.warn('恢复反向问题库失败:', e);
+        }
+
+        // 延迟初始化
         setTimeout(() => {
             applyAllAvatarFrames();
-            manageAutoSendTimer(); 
-            checkEnvelopeStatus(); 
+            manageAutoSendTimer();
+            checkEnvelopeStatus();
             updateUI();
             if (settings.customBubbleCss) {
-                try { applyCustomBubbleCss(settings.customBubbleCss); } catch(e) {}
+                try { applyCustomBubbleCss(settings.customBubbleCss); } catch (e) {}
             }
         }, 100);
 
@@ -566,82 +673,105 @@ function _tryRecoverFromBackup() {
 
 const saveData = async () => {
     if (!SESSION_ID) {
-        console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
+        console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存');
         return;
     }
 
-    const promises = [
-        { key: 'chatSettings',           val: () => localforage.setItem(getStorageKey('chatSettings'), settings) },
-        { key: 'customReverseQuestions', val: () => localforage.setItem(getStorageKey('customReverseQuestions'), customReverseQuestions) },
-        { key: 'customReplies',          val: () => localforage.setItem(getStorageKey('customReplies'), customReplies) },
-        { key: 'customReplyGroups',      val: () => localforage.setItem(getStorageKey('customReplyGroups'), window.customReplyGroups || []) },
-        { key: 'customPokeGroups',        val: () => localforage.setItem(getStorageKey('customPokeGroups'), window.customPokeGroups || []) },
-        { key: 'customStatusGroups',      val: () => localforage.setItem(getStorageKey('customStatusGroups'), window.customStatusGroups || []) },
-        { key: 'customEmojis',           val: () => localforage.setItem(getStorageKey('customEmojis'), customEmojis) },
-        { key: 'anniversaries',          val: () => localforage.setItem(getStorageKey('anniversaries'), anniversaries) },
-        { key: 'customPokes',            val: () => localforage.setItem(getStorageKey('customPokes'), customPokes) },
-        { key: 'customStatuses',         val: () => localforage.setItem(getStorageKey('customStatuses'), customStatuses) },
-        { key: 'customMottos',           val: () => localforage.setItem(getStorageKey('customMottos'), customMottos) },
-        { key: 'customIntros',           val: () => localforage.setItem(getStorageKey('customIntros'), customIntros) },
-        { key: 'stickerLibrary',         val: () => localforage.setItem(getStorageKey('stickerLibrary'), stickerLibrary) },
-        { key: 'myStickerLibrary',       val: () => localforage.setItem(getStorageKey('myStickerLibrary'), myStickerLibrary) },
-        { key: 'customThemes',           val: () => localforage.setItem(`${APP_PREFIX}customThemes`, customThemes) },
-        { key: 'themeSchemes',           val: () => localforage.setItem(`${APP_PREFIX}themeSchemes`, themeSchemes) },
-        { key: 'chatMessages',           val: () => localforage.setItem(getStorageKey('chatMessages'), messages) },
-    ];
-    // ===== 防抖保存函数（放在 saveData 之后） =====
-let _saveTimer = null;
-function throttledSaveData() {
-    if (_saveTimer) clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(function() {
-        saveData();
-        _saveTimer = null;
-    }, 500);
-}
+    // ===== 分离保存：每个数据独立存储 =====
+    const savePromises = [];
 
+    // 核心数据
+    savePromises.push(safeStore(getStorageKey('chatSettings'), settings));
+    savePromises.push(safeStore(getStorageKey('chatMessages'), messages));
+
+    // 回复库
+    savePromises.push(safeStore(getStorageKey('customReplies'), customReplies));
+    savePromises.push(safeStore(getStorageKey('customReplyGroups'), window.customReplyGroups || []));
+
+    // 氛围感
+    savePromises.push(safeStore(getStorageKey('customPokes'), customPokes));
+    savePromises.push(safeStore(getStorageKey('customPokeGroups'), window.customPokeGroups || []));
+    savePromises.push(safeStore(getStorageKey('customStatuses'), customStatuses));
+    savePromises.push(safeStore(getStorageKey('customStatusGroups'), window.customStatusGroups || []));
+    savePromises.push(safeStore(getStorageKey('customMottos'), customMottos));
+    savePromises.push(safeStore(getStorageKey('customIntros'), customIntros));
+
+    // 表情
+    savePromises.push(safeStore(getStorageKey('customEmojis'), customEmojis));
+    savePromises.push(safeStore(getStorageKey('stickerLibrary'), stickerLibrary));
+    savePromises.push(safeStore(getStorageKey('myStickerLibrary'), myStickerLibrary));
+
+    // 纪念日
+    savePromises.push(safeStore(getStorageKey('anniversaries'), anniversaries));
+
+    // 主题
+    savePromises.push(safeStore(`${APP_PREFIX}customThemes`, customThemes));
+    savePromises.push(safeStore(`${APP_PREFIX}themeSchemes`, themeSchemes));
+
+    // 其他
+    savePromises.push(safeStore(getStorageKey('partnerPersonas'), partnerPersonas));
+    savePromises.push(safeStore(getStorageKey('customReverseQuestions'), customReverseQuestions));
+
+    // 头像（从DOM获取）
     const partnerAvatarSrc = (() => {
         try {
             const img = DOMElements.partner.avatar.querySelector('img');
             return img ? img.src : null;
-        } catch(e) { return null; }
+        } catch (e) { return null; }
     })();
     const myAvatarSrc = (() => {
         try {
             const img = DOMElements.me.avatar.querySelector('img');
             return img ? img.src : null;
-        } catch(e) { return null; }
+        } catch (e) { return null; }
     })();
 
     if (partnerAvatarSrc) {
-        promises.push({ key: 'partnerAvatar', val: () => localforage.setItem(getStorageKey('partnerAvatar'), partnerAvatarSrc) });
+        savePromises.push(safeStore(getStorageKey('partnerAvatar'), partnerAvatarSrc));
     } else {
-        promises.push({ key: 'partnerAvatar', val: () => localforage.removeItem(getStorageKey('partnerAvatar')) });
+        savePromises.push(safeStore(getStorageKey('partnerAvatar'), null));
     }
-
     if (myAvatarSrc) {
-        promises.push({ key: 'myAvatar', val: () => localforage.setItem(getStorageKey('myAvatar'), myAvatarSrc) });
+        savePromises.push(safeStore(getStorageKey('myAvatar'), myAvatarSrc));
     } else {
-        promises.push({ key: 'myAvatar', val: () => localforage.removeItem(getStorageKey('myAvatar')) });
+        savePromises.push(safeStore(getStorageKey('myAvatar'), null));
     }
 
-    const results = await Promise.allSettled(promises.map(p => {
-        try { return p.val(); }
-        catch(e) { return Promise.reject(e); }
-    }));
+    // 背景
+    const currentBg = document.documentElement.style.getPropertyValue('--chat-bg-image');
+    if (currentBg) {
+        savePromises.push(safeStore(getStorageKey('chatBackground'), currentBg));
+    }
 
-    const failed = [];
-    results.forEach((r, i) => {
-        if (r.status === 'rejected') {
-            failed.push(promises[i].key);
-            console.error(`[saveData] 保存失败: ${promises[i].key}`, r.reason);
-        }
-    });
+    // 背景图库
+    savePromises.push(safeStore(getStorageKey('backgroundGallery'), savedBackgrounds));
 
+    // 执行所有保存
+    const results = await Promise.allSettled(savePromises);
+    
+    // 检查失败项
+    const failed = results.filter(r => r.status === 'rejected');
     if (failed.length > 0) {
-        console.warn(`[saveData] ${failed.length} 项写入失败，已触发 localStorage 降级备份`, failed);
+        console.warn(`[saveData] ${failed.length} 项写入失败`, failed.map((f, i) => `[${i}] ${f.reason}`));
     }
 
+    // 降级备份到 localStorage（仅关键数据）
     _backupCriticalData();
+
+    // ===== 🔥 新增：备份反向问题库到 localStorage =====
+    try {
+        if (customReverseQuestions && customReverseQuestions.length > 0) {
+            localStorage.setItem('BACKUP_customReverseQuestions', JSON.stringify(customReverseQuestions));
+        } else {
+            // 如果为空，清除备份
+            localStorage.removeItem('BACKUP_customReverseQuestions');
+        }
+    } catch (e) {
+        console.warn('备份反向问题库失败:', e);
+    }
+
+    // 返回保存结果
+    return results;
 };
 
 function initializeRandomUI() {
@@ -1179,9 +1309,24 @@ function renderMessages(preserveScroll = false) {
     const startIndex = Math.max(0, totalMessages - displayedMessageCount);
     const msgsToRender = messages.slice(startIndex);
 
-    const historyLoader = document.getElementById('history-loader');
-    if (historyLoader) {
-        historyLoader.style.display = startIndex > 0 ? 'flex' : 'none';
+    // 🔥 移除旧的按钮
+    const oldBtn = container.querySelector('.load-more-btn-wrapper');
+    if (oldBtn) oldBtn.remove();
+
+    if (startIndex > 0) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'load-more-btn-wrapper';
+        wrapper.style.cssText = 'text-align:center;padding:6px 0;background:transparent;flex-shrink:0;';
+        wrapper.innerHTML = `
+            <div style="display:inline-block;cursor:pointer;padding:5px 14px;border-radius:12px;background:rgba(0,0,0,0.05);color:var(--text-secondary);font-size:12px;transition:all 0.2s;border:1px solid rgba(0,0,0,0.06);backdrop-filter:blur(8px);" 
+                 onclick="loadMoreHistory()"
+                 onmouseover="this.style.background='rgba(var(--accent-color-rgb),0.12)';this.style.color='var(--accent-color)';"
+                 onmouseout="this.style.background='rgba(0,0,0,0.05)';this.style.color='var(--text-secondary)';">
+                <i class="fas fa-chevron-up" style="margin-right:4px;font-size:10px;"></i>
+                加载更早的消息 (${startIndex} 条)
+            </div>
+        `;
+        container.prepend(wrapper);
     }
 
     DOMElements.emptyState.style.display = totalMessages === 0 ? 'flex' : 'none';
@@ -1189,7 +1334,12 @@ function renderMessages(preserveScroll = false) {
     const oldScrollHeight = container.scrollHeight;
     const oldScrollTop = container.scrollTop;
     
-    container.innerHTML = '';
+    const children = container.children;
+    for (let i = children.length - 1; i >= 0; i--) {
+        if (!children[i].classList.contains('load-more-btn-wrapper')) {
+            children[i].remove();
+        }
+    }
 
     const fragment = new DocumentFragment();
     
@@ -1285,38 +1435,65 @@ window._addCallEvent = (icon, label, detail) => {
 
 function optimizeImage(file, maxWidth = 800, quality = 0.7) {
     return new Promise((resolve, reject) => {
+        // 小图片（< 300KB）直接返回，不压缩
         if (file.size < 300 * 1024) {
             const reader = new FileReader();
-            reader.onload = e => resolve(e.target.result);
-            reader.onerror = reject;
+            reader.onload = function(e) {
+                resolve(e.target.result);
+            };
+            reader.onerror = function(e) {
+                reject(e);
+            };
             reader.readAsDataURL(file);
             return;
         }
+
+        // 大图片使用 Canvas 压缩
         const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            let {
-                width,
-                height
-            } = img;
-            if (width > maxWidth) {
-                height = Math.round((height * maxWidth) / width);
-                width = maxWidth;
+        img.onload = function() {
+            try {
+                let width = img.width;
+                let height = img.height;
+                
+                // 按比例缩放
+                if (width > maxWidth) {
+                    height = Math.round((height * maxWidth) / width);
+                    width = maxWidth;
+                }
+                
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                
+                // 绘制图片
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                // 压缩为 JPEG
+                const compressed = canvas.toDataURL('image/jpeg', quality);
+                
+                // 释放内存
+                URL.revokeObjectURL(img.src);
+                resolve(compressed);
+            } catch (err) {
+                URL.revokeObjectURL(img.src);
+                reject(err);
             }
-            canvas.width = width;
-            canvas.height = height;
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', quality));
-            URL.revokeObjectURL(img.src);
         };
-        img.onerror = () => {
+        
+        img.onerror = function() {
+            // 图片加载失败时，降级为直接读取原图
+            URL.revokeObjectURL(img.src);
             const reader = new FileReader();
-            reader.onload = e => resolve(e.target.result);
-            reader.onerror = reject;
+            reader.onload = function(e) {
+                resolve(e.target.result);
+            };
+            reader.onerror = function(e) {
+                reject(e);
+            };
             reader.readAsDataURL(file);
-            URL.revokeObjectURL(img.src);
         };
+        
         img.src = URL.createObjectURL(file);
     });
 }
@@ -1989,11 +2166,24 @@ function exportChatHistory() {
                 exportObj.dgStatusPool = dgStatusPool;
                 exportObj.customWeatherMap = customWeatherMap;
             }
-            if (inclReplies)  {
-                exportObj.customReplies = customReplies;
-                if (customEmojis && customEmojis.length > 0) exportObj.customEmojis = customEmojis;
-                exportObj.exportModules.push('customReplies');
-            }
+// ===== 🔥 导出回复库和氛围感数据（修改这里） =====
+if (inclReplies) {
+    exportObj.customReplies = customReplies || [];
+    if (customEmojis && customEmojis.length > 0) exportObj.customEmojis = customEmojis;
+    if (customPokes && customPokes.length > 0) exportObj.customPokes = customPokes;
+    if (customStatuses && customStatuses.length > 0) exportObj.customStatuses = customStatuses;
+    if (customMottos && customMottos.length > 0) exportObj.customMottos = customMottos;
+    if (customIntros && customIntros.length > 0) exportObj.customIntros = customIntros;
+    if (window.customPokeGroups && window.customPokeGroups.length > 0) exportObj.customPokeGroups = window.customPokeGroups;
+    if (window.customStatusGroups && window.customStatusGroups.length > 0) exportObj.customStatusGroups = window.customStatusGroups;
+    if (window.customReplyGroups && window.customReplyGroups.length > 0) exportObj.customReplyGroups = window.customReplyGroups;
+    // 🔥 新增：导出反向提问问题库
+    if (customReverseQuestions && customReverseQuestions.length > 0) {
+        exportObj.customReverseQuestions = customReverseQuestions;
+        console.log('✅ 导出反向提问问题库:', customReverseQuestions.length, '条');
+    }
+    exportObj.exportModules.push('customReplies');
+}
             if (inclAnn)      { exportObj.anniversaries = anniversaries; exportObj.exportModules.push('anniversaries'); }
             if (inclThemes)   {
                 exportObj.customThemes = customThemes;
@@ -2041,9 +2231,13 @@ function importChatHistory(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
-            let rawText = e.target.result;
-            if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
-            let importedData = JSON.parse(rawText);
+let rawText = e.target.result;
+if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
+let importedData = JSON.parse(rawText);
+window.importedData = importedData;  // 🔥 添加这一行
+console.log('📦 导入数据已保存到 window.importedData');
+console.log('📦 字段:', Object.keys(importedData));
+console.log('📦 customReverseQuestions:', importedData.customReverseQuestions);
 
             // 兼容全量备份格式（type:'full' 或含 indexedDB/localforage 字段）
             // 将其转换为 importChatHistory 能识别的标准字段
@@ -2120,11 +2314,22 @@ function importChatHistory(file) {
                 if (themes) { converted.customThemes = themes; converted.exportModules.push('themes'); }
 
                 importedData = converted;
+               // ===== 🔥 位置2：转换后保存 =====
+                window.importedData = importedData;
+                console.log('📦 [2] 转换后字段:', Object.keys(importedData));
+                console.log('📦 [2] customReverseQuestions:', importedData.customReverseQuestions);
             }
 
             const hasMessages  = importedData.messages && Array.isArray(importedData.messages);
             const hasSettings  = !!importedData.settings;
-            const hasReplies   = importedData.customReplies && Array.isArray(importedData.customReplies);
+ // 🔥 检测是否有回复库数据（包括反向问题库）
+const hasReplies = (importedData.customReplies && Array.isArray(importedData.customReplies) && importedData.customReplies.length > 0) ||
+                   (importedData.customReverseQuestions && Array.isArray(importedData.customReverseQuestions) && importedData.customReverseQuestions.length > 0) ||
+                   (importedData.customEmojis && Array.isArray(importedData.customEmojis) && importedData.customEmojis.length > 0) ||
+                   (importedData.customPokes && Array.isArray(importedData.customPokes) && importedData.customPokes.length > 0) ||
+                   (importedData.customStatuses && Array.isArray(importedData.customStatuses) && importedData.customStatuses.length > 0) ||
+                   (importedData.customMottos && Array.isArray(importedData.customMottos) && importedData.customMottos.length > 0) ||
+                   (importedData.customIntros && Array.isArray(importedData.customIntros) && importedData.customIntros.length > 0);
             const hasAnn       = importedData.anniversaries && Array.isArray(importedData.anniversaries);
             const hasThemes    = !!importedData.customThemes || !!importedData.stickerLibrary;
 
@@ -2172,50 +2377,167 @@ function importChatHistory(file) {
             const _impConfirmBtn = document.getElementById('_imp_confirm');
             if (_impCancelBtn) _impCancelBtn.onclick = closeDialog;
 
-            if (_impConfirmBtn) _impConfirmBtn.onclick = function() {
-                const doMsgs     = hasMessages  && !!document.getElementById('_imp_msgs')?.checked;
-                const doSettings = hasSettings  && !!document.getElementById('_imp_settings')?.checked;
-                const doReplies  = hasReplies   && !!document.getElementById('_imp_replies')?.checked;
-                const doAnn      = hasAnn       && !!document.getElementById('_imp_ann')?.checked;
-                const doThemes   = hasThemes    && !!document.getElementById('_imp_themes')?.checked;
+   if (_impConfirmBtn) _impConfirmBtn.onclick = async function() {
+    // ===== 🔥 位置3：确认 importedData 可用 =====
+    console.log('📦 [_impConfirmBtn] importedData 字段:', Object.keys(importedData || {}));
+    console.log('📦 [_impConfirmBtn] customReverseQuestions:', importedData?.customReverseQuestions);
+    
+    // 如果 importedData 为空，从 window.importedData 恢复
+    if (!importedData || Object.keys(importedData).length === 0) {
+        importedData = window.importedData;
+        console.log('📦 从 window.importedData 恢复:', importedData ? Object.keys(importedData) : 'undefined');
+    }
+    const doMsgs     = hasMessages  && !!document.getElementById('_imp_msgs')?.checked;
+    const doSettings = hasSettings  && !!document.getElementById('_imp_settings')?.checked;
+    const doReplies  = hasReplies   && !!document.getElementById('_imp_replies')?.checked;
+    const doAnn      = hasAnn       && !!document.getElementById('_imp_ann')?.checked;
+    const doThemes   = hasThemes    && !!document.getElementById('_imp_themes')?.checked;
 
-                if (!doMsgs && !doSettings && !doReplies && !doAnn && !doThemes) {
-                    showNotification('请至少选择一项导入内容', 'error');
-                    return;
-                }
+    if (!doMsgs && !doSettings && !doReplies && !doAnn && !doThemes) {
+        showNotification('请至少选择一项导入内容', 'error');
+        return;
+    }
 
-                if (doMsgs && messages.length > 0 && !confirm('导入将覆盖当前会话的聊天记录，确定继续吗？')) return;
-                closeDialog();
+    if (doMsgs && messages.length > 0 && !confirm('导入将覆盖当前会话的聊天记录，确定继续吗？')) return;
+    closeDialog();
 
-                if (doMsgs) {
-                    messages = importedData.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }));
-                }
-                if (doSettings) {
-                    if (importedData.settings) {
-                        Object.assign(settings, importedData.settings);
-                        try {
-                            if (settings.customFontUrl) applyCustomFont(settings.customFontUrl);
-                            if (settings.customBubbleCss) applyCustomBubbleCss(settings.customBubbleCss);
-                            if (settings.customGlobalCss) applyGlobalThemeCss(settings.customGlobalCss);
-                        } catch(e2) { console.warn('导入后样式应用失败', e2); }
-                    }
-                    if (importedData.dgCustomData) { try { localStorage.setItem('dg_custom_data', JSON.stringify(importedData.dgCustomData)); } catch(e2) {} }
-                    if (importedData.dgStatusPool) { try { localStorage.setItem('dg_status_pool', JSON.stringify(importedData.dgStatusPool)); } catch(e2) {} }
-                    if (importedData.customWeatherMap) { try { Object.keys(importedData.customWeatherMap).forEach(wk => localStorage.setItem(wk, importedData.customWeatherMap[wk])); } catch(e2) {} }
-                }
-                if (doReplies  && importedData.customReplies)  customReplies  = importedData.customReplies;
-                if (doReplies  && importedData.customEmojis && Array.isArray(importedData.customEmojis)) customEmojis = importedData.customEmojis;
-                if (doAnn      && importedData.anniversaries)   anniversaries  = importedData.anniversaries;
-                if (doThemes   && importedData.customThemes)    customThemes   = importedData.customThemes;
-                if (doThemes   && importedData.stickerLibrary)  stickerLibrary = importedData.stickerLibrary;
+    // ===== 🔥 方案2：无条件导入反向提问问题库 =====
+    if (importedData.customReverseQuestions && Array.isArray(importedData.customReverseQuestions) && importedData.customReverseQuestions.length > 0) {
+        customReverseQuestions = importedData.customReverseQuestions;
+        await safeStore(getStorageKey('customReverseQuestions'), customReverseQuestions);
+        // 🔥 新增：同时备份到 localStorage
+        localStorage.setItem('BACKUP_customReverseQuestions', JSON.stringify(customReverseQuestions));
+        console.log('✅ 导入反向提问问题库:', customReverseQuestions.length, '条');
+    } else {
+        console.log('ℹ️ 导入文件中没有 customReverseQuestions 数据');
+        // 调试：显示 importedData 中所有字段
+        console.log('📦 importedData 字段:', Object.keys(importedData || {}));
+    }
 
-                saveData();
-                if (doMsgs && typeof renderMessages === 'function') renderMessages();
-                if (typeof applySettings === 'function') applySettings();
-                updateUI();
-                const count = doMsgs ? `${messages.length} 条消息` : '所选数据';
-                showNotification(`成功导入${count}`, 'success');
-            };
+    // ===== 导入消息 =====
+    if (doMsgs) {
+        messages = importedData.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }));
+        await safeStore(getStorageKey('chatMessages'), messages);
+    }
+
+    // ===== 导入设置 =====
+    if (doSettings) {
+        if (importedData.settings) {
+            Object.assign(settings, importedData.settings);
+            await safeStore(getStorageKey('chatSettings'), settings);
+            try {
+                if (settings.customFontUrl) applyCustomFont(settings.customFontUrl);
+                if (settings.customBubbleCss) applyCustomBubbleCss(settings.customBubbleCss);
+                if (settings.customGlobalCss) applyGlobalThemeCss(settings.customGlobalCss);
+            } catch(e2) { console.warn('导入后样式应用失败', e2); }
+        }
+        if (importedData.dgCustomData) { try { localStorage.setItem('dg_custom_data', JSON.stringify(importedData.dgCustomData)); } catch(e2) {} }
+        if (importedData.dgStatusPool) { try { localStorage.setItem('dg_status_pool', JSON.stringify(importedData.dgStatusPool)); } catch(e2) {} }
+        if (importedData.customWeatherMap) { try { Object.keys(importedData.customWeatherMap).forEach(wk => localStorage.setItem(wk, importedData.customWeatherMap[wk])); } catch(e2) {} }
+    }
+
+  // ===== 🔥 导入回复库和氛围感数据（修改这里） =====
+if (doReplies) {
+    console.log('📦 导入前的数据状态:');
+    console.log('  customPokes 当前:', customPokes?.length || 0, '条');
+    console.log('  importedData.customPokes:', importedData.customPokes?.length || 0, '条');
+    console.log('  importedData.customStatuses:', importedData.customStatuses?.length || 0, '条');
+    console.log('  importedData.customMottos:', importedData.customMottos?.length || 0, '条');
+    console.log('  importedData.customIntros:', importedData.customIntros?.length || 0, '条');
+    
+    if (importedData.customPokes && Array.isArray(importedData.customPokes) && importedData.customPokes.length > 0) {
+        customPokes = importedData.customPokes;
+        await safeStore(getStorageKey('customPokes'), customPokes);
+        console.log('✅ 已保存 customPokes:', customPokes.length, '条');
+    } else {
+        console.warn('⚠️ importedData.customPokes 为空或无效');
+    }
+    
+    if (importedData.customStatuses && Array.isArray(importedData.customStatuses) && importedData.customStatuses.length > 0) {
+        customStatuses = importedData.customStatuses;
+        await safeStore(getStorageKey('customStatuses'), customStatuses);
+        console.log('✅ 已保存 customStatuses:', customStatuses.length, '条');
+    }
+    
+    if (importedData.customMottos && Array.isArray(importedData.customMottos) && importedData.customMottos.length > 0) {
+        customMottos = importedData.customMottos;
+        await safeStore(getStorageKey('customMottos'), customMottos);
+        console.log('✅ 已保存 customMottos:', customMottos.length, '条');
+    }
+    
+    if (importedData.customIntros && Array.isArray(importedData.customIntros) && importedData.customIntros.length > 0) {
+        customIntros = importedData.customIntros;
+        await safeStore(getStorageKey('customIntros'), customIntros);
+        console.log('✅ 已保存 customIntros:', customIntros.length, '条');
+    }
+    
+    if (importedData.customEmojis && Array.isArray(importedData.customEmojis) && importedData.customEmojis.length > 0) {
+        customEmojis = importedData.customEmojis;
+        await safeStore(getStorageKey('customEmojis'), customEmojis);
+        console.log('✅ 已保存 customEmojis:', customEmojis.length, '条');
+    }
+    
+    // 导入分组数据
+    if (importedData.customPokeGroups && Array.isArray(importedData.customPokeGroups)) {
+        window.customPokeGroups = importedData.customPokeGroups;
+        await safeStore(getStorageKey('customPokeGroups'), window.customPokeGroups);
+        console.log('✅ 已保存 customPokeGroups:', window.customPokeGroups.length, '条');
+    }
+    if (importedData.customStatusGroups && Array.isArray(importedData.customStatusGroups)) {
+        window.customStatusGroups = importedData.customStatusGroups;
+        await safeStore(getStorageKey('customStatusGroups'), window.customStatusGroups);
+        console.log('✅ 已保存 customStatusGroups:', window.customStatusGroups.length, '条');
+    }
+    if (importedData.customReplyGroups && Array.isArray(importedData.customReplyGroups)) {
+        window.customReplyGroups = importedData.customReplyGroups;
+        await safeStore(getStorageKey('customReplyGroups'), window.customReplyGroups);
+        console.log('✅ 已保存 customReplyGroups:', window.customReplyGroups.length, '条');
+    }
+}
+
+    // ===== 导入纪念日 =====
+    if (doAnn && importedData.anniversaries) {
+        anniversaries = importedData.anniversaries;
+        await safeStore(getStorageKey('anniversaries'), anniversaries);
+    }
+
+    // ===== 导入主题和表情包 =====
+    if (doThemes) {
+        if (importedData.customThemes) {
+            customThemes = importedData.customThemes;
+            await safeStore(`${APP_PREFIX}customThemes`, customThemes);
+        }
+        if (importedData.stickerLibrary) {
+            stickerLibrary = importedData.stickerLibrary;
+            await safeStore(getStorageKey('stickerLibrary'), stickerLibrary);
+        }
+        if (importedData.myStickerLibrary) {
+            myStickerLibrary = importedData.myStickerLibrary;
+            await safeStore(getStorageKey('myStickerLibrary'), myStickerLibrary);
+        }
+        if (importedData.themeSchemes) {
+            themeSchemes = importedData.themeSchemes;
+            await safeStore(`${APP_PREFIX}themeSchemes`, themeSchemes);
+        }
+    }
+
+    // 刷新界面
+    if (doMsgs && typeof renderMessages === 'function') renderMessages();
+    if (typeof applySettings === 'function') applySettings();
+    updateUI();
+
+ // ===== 🔥 新增：如果导入了反向问题库，刷新相关 UI =====
+    if (importedData.customReverseQuestions && importedData.customReverseQuestions.length > 0) {
+        // 如果有刷新反向问题库的函数，调用它
+        if (typeof renderReverseQuestions === 'function') {
+            renderReverseQuestions();
+        }
+        console.log('✅ 反向提问问题库已导入，请检查"帮我决定"功能');
+    }
+    
+    const count = doMsgs ? `${messages.length} 条消息` : '所选数据';
+    showNotification(`✅ 成功导入${count}`, 'success');
+};
         } catch (error) {
             console.error('导入失败:', error);
             showNotification('文件格式错误或已损坏', 'error');
@@ -2361,3 +2683,15 @@ document.addEventListener('DOMContentLoaded', function() {
         observer.observe(historyLoader);
     }
 });
+// 存储监控 - 定期检查
+setInterval(async () => {
+    try {
+        const usage = await checkStorageUsage();
+        const totalMB = parseFloat(usage.total);
+        if (totalMB > 4) {
+            console.warn('⚠️ 存储使用超过 4MB，建议清理');
+        }
+    } catch (e) {
+        // 静默失败
+    }
+}, 5 * 60 * 1000); // 每5分钟检查一次

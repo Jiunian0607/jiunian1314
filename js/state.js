@@ -4,11 +4,150 @@
  * NOTE: This must be loaded after the DOM is ready (or wrapped in DOMContentLoaded)
  */
 
+// 🔥 新增：分离存储配置 - 解决手机端数据被吞问题
+
+const STORAGE_KEYS = {
+    // 核心数据
+    MESSAGES: 'chatMessages',
+    SETTINGS: 'chatSettings',
+    
+    // 朋友圈相关
+    MOMENTS: 'moments_list',
+    MOMENT_AVATARS: 'momentAvatars',
+    
+    // 群聊
+    GROUP_CHAT: 'groupChatData',
+    
+    // 回复库
+    REPLIES: 'customReplies',
+    REPLY_GROUPS: 'customReplyGroups',
+    
+    // 氛围感
+    POKES: 'customPokes',
+    POKE_GROUPS: 'customPokeGroups',
+    STATUSES: 'customStatuses',
+    STATUS_GROUPS: 'customStatusGroups',
+    MOTTOS: 'customMottos',
+    INTROS: 'customIntros',
+    
+    // 表情
+    EMOJIS: 'customEmojis',
+    STICKERS: 'stickerLibrary',
+    MY_STICKERS: 'myStickerLibrary',
+    
+    // 纪念日
+    ANNIVERSARIES: 'anniversaries',
+    
+    // 主题
+    CUSTOM_THEMES: 'customThemes',
+    THEME_SCHEMES: 'themeSchemes',
+    
+    // 头像
+    PARTNER_AVATAR: 'partnerAvatar',
+    MY_AVATAR: 'myAvatar',
+    
+    // 背景
+    BACKGROUND: 'chatBackground',
+    BACKGROUND_GALLERY: 'backgroundGallery',
+    
+    // 其他
+    PARTNER_PERSONAS: 'partnerPersonas',
+    SHOW_PARTNER_NAME: 'showPartnerNameInChat',
+    REVERSE_QUESTIONS: 'customReverseQuestions',
+};
+
+// ============================================================
+// 🔥 新增：安全存储工具函数
+// ============================================================
+
+// 获取存储键（带前缀）- 注意：这个函数在 core.js 中也有定义，这里统一
+// 如果 core.js 中已有 getStorageKey，这里可以省略，但为了安全保留
+function getStorageKeyLocal(baseKey) {
+    if (!window.SESSION_ID) {
+        console.error('[getStorageKey] SESSION_ID 尚未初始化');
+        throw new Error('SESSION_ID 未初始化');
+    }
+    return `${window.APP_PREFIX || 'CHAT_APP_V3_'}${window.SESSION_ID}_${baseKey}`;
+}
+
+// 安全存储到 IndexedDB
+async function safeStore(key, data) {
+    try {
+        await localforage.setItem(key, data);
+        return true;
+    } catch (e) {
+        if (e.name === 'QuotaExceededError' || e.message?.includes('QuotaExceeded')) {
+            console.error(`⚠️ 存储空间不足！键名: ${key}`, e);
+            if (typeof window.showNotification === 'function') {
+                window.showNotification('⚠️ 存储空间不足，请导出数据后清理缓存', 'warning', 5000);
+            }
+        } else {
+            console.error(`❌ 存储失败 (${key}):`, e);
+        }
+        return false;
+    }
+}
+
+// 安全读取 IndexedDB
+async function safeLoad(key, defaultValue = null) {
+    try {
+        const data = await localforage.getItem(key);
+        return data !== null && data !== undefined ? data : defaultValue;
+    } catch (e) {
+        console.error(`❌ 读取失败 (${key}):`, e);
+        return defaultValue;
+    }
+}
+
+// 检查存储使用情况（辅助调试）
+async function checkStorageUsage() {
+    try {
+        const total = await localforage.length();
+        let details = {};
+        let totalSize = 0;
+        for (let i = 0; i < total; i++) {
+            const key = await localforage.key(i);
+            if (key) {
+                const val = await localforage.getItem(key);
+                if (val) {
+                    const size = new Blob([JSON.stringify(val)]).size;
+                    totalSize += size;
+                    details[key] = (size / 1024).toFixed(1) + 'KB';
+                }
+            }
+        }
+        console.log('📊 存储使用情况:', {
+            total: (totalSize / 1024 / 1024).toFixed(2) + 'MB',
+            details
+        });
+        return { total: (totalSize / 1024 / 1024).toFixed(2) + 'MB', details };
+    } catch (e) {
+        console.error('检查存储失败:', e);
+        return null;
+    }
+}
+
+// 暴露到全局
+window.STORAGE_KEYS = STORAGE_KEYS;
+window.safeStore = safeStore;
+window.safeLoad = safeLoad;
+window.checkStorageUsage = checkStorageUsage;
+
         let SESSION_ID = null;
         let autoSendTimer = null; 
         let sessionList = [];
         let messages = [];
         let settings = {};
+if (typeof window !== 'undefined' && window.localforage) {
+    // 延迟执行，等页面加载完成
+    setTimeout(async () => {
+        try {
+            await checkStorageUsage();
+        } catch (e) {
+            // 静默失败
+        }
+    }, 3000);
+}
         let partnerPersonas = []; 
         let showPartnerNameInChat = false; 
         let readNoReplyTimer = null; 
@@ -41,6 +180,15 @@
         let currentAnniversaryType = 'anniversary';
         let customThemes = [];
         let themeSchemes = []; 
+if (typeof window.getStorageKey === 'undefined') {
+    window.getStorageKey = function(baseKey) {
+        if (!window.SESSION_ID) {
+            console.error('[getStorageKey] SESSION_ID 尚未初始化');
+            return `CHAT_APP_V3__${baseKey}`;
+        }
+        return `CHAT_APP_V3_${window.SESSION_ID}_${baseKey}`;
+    };
+}
         const DOMElements = {
             html: document.documentElement,
             chatContainer: document.getElementById('chat-container'),
@@ -180,26 +328,38 @@
             }
         };
 // ============================================================
-// 朋友圈功能 - 数据存储（localStorage 版本，无需 localForage）
+// 🔥 修改：朋友圈功能 - 使用 IndexedDB 分离存储
 // ============================================================
 
-// 使用 localStorage 存储朋友圈数据
+// 创建独立的 IndexedDB 实例
+const momentsStorage = localforage.createInstance({
+    name: 'ChuanXun',
+    storeName: 'moments_separated'
+});
+
+// 使用 IndexedDB 存储朋友圈数据
 const momentsDB = {
     async getItem(key) {
         try {
-            const data = localStorage.getItem(key);
-            return data ? JSON.parse(data) : null;
-        } catch (e) { return null; }
+            return await momentsStorage.getItem(key);
+        } catch (e) { 
+            console.error('momentsDB.getItem 失败:', e);
+            return null; 
+        }
     },
     async setItem(key, value) {
         try {
-            localStorage.setItem(key, JSON.stringify(value));
-        } catch (e) {}
+            await momentsStorage.setItem(key, value);
+        } catch (e) {
+            console.error('momentsDB.setItem 失败:', e);
+        }
     },
     async removeItem(key) {
         try {
-            localStorage.removeItem(key);
-        } catch (e) {}
+            await momentsStorage.removeItem(key);
+        } catch (e) {
+            console.error('momentsDB.removeItem 失败:', e);
+        }
     }
 };
 
@@ -231,7 +391,10 @@ const MomentsDOMElements = {
     boostComment: document.getElementById('moments-boost-comment')
 };
 
-// 导出朋友圈数据操作函数
+// ============================================================
+// 🔥 修改：朋友圈数据操作（使用 IndexedDB 分离存储）
+// ============================================================
+
 const MomentsDB = {
     async getAll() {
         const data = await momentsDB.getItem('moments_list');
@@ -276,25 +439,39 @@ const MomentsDB = {
     }
 };
 
-// 初始化：确保数据存在
+// ============================================================
+// 🔥 修改：初始化朋友圈存储
+// ============================================================
+
 (async function initMomentsStorage() {
     try {
         const exists = await momentsDB.getItem('moments_list');
-        if (exists === null) {
+        if (exists === null || exists === undefined) {
             await momentsDB.setItem('moments_list', []);
-            console.log('📸 朋友圈存储已初始化 (localStorage)');
+            console.log('📸 朋友圈存储已初始化 (IndexedDB 分离存储)');
         } else {
             console.log('📸 朋友圈存储已就绪，共', exists.length, '条数据');
         }
     } catch (e) {
         console.warn('📸 朋友圈存储初始化失败:', e);
+        // 降级方案：尝试使用 localStorage
+        try {
+            const fallback = localStorage.getItem('moments_list');
+            if (fallback) {
+                await momentsDB.setItem('moments_list', JSON.parse(fallback));
+                localStorage.removeItem('moments_list');
+                console.log('📸 已从 localStorage 迁移到 IndexedDB');
+            }
+        } catch (e2) {}
     }
 })();
 
 // 将 MomentsDB 暴露到全局
+window.momentsDB = momentsDB;
 window.MomentsDB = MomentsDB;
 window.momentsList = momentsList;
 window.momentsMode = momentsMode;
 window.momentsBoost = momentsBoost;
 // 暴露 settings 到全局
 window.settings = settings;
+window.momentsStorage = momentsStorage;

@@ -518,6 +518,56 @@
             }
         }
 
+    // ===== 🔥 从全量备份中恢复反向提问问题库 =====
+    try {
+        // 从 data 中查找 customReverseQuestions
+        var reverseData = null;
+        
+        // 1. 在 data.localforage 中查找
+        if (data.localforage) {
+            for (var key in data.localforage) {
+                if (key.indexOf('customReverseQuestions') !== -1) {
+                    reverseData = data.localforage[key];
+                    console.log('🔍 在全量备份的 localforage 中找到:', key);
+                    break;
+                }
+            }
+        }
+        
+        // 2. 如果没找到，在 data.localStorage 中查找
+        if (!reverseData && data.localStorage) {
+            for (var key in data.localStorage) {
+                if (key.indexOf('customReverseQuestions') !== -1) {
+                    try {
+                        reverseData = JSON.parse(data.localStorage[key]);
+                        console.log('🔍 在全量备份的 localStorage 中找到:', key);
+                    } catch(e) {
+                        reverseData = data.localStorage[key];
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // 3. 如果找到了，恢复到内存和存储
+        if (reverseData && Array.isArray(reverseData) && reverseData.length > 0) {
+            if (typeof customReverseQuestions !== 'undefined') {
+                customReverseQuestions = reverseData;
+            }
+            // 保存到 IndexedDB
+            var storageKey = getStorageKey('customReverseQuestions');
+            await localforage.setItem(storageKey, reverseData);
+            // 同时保存到 localStorage 备份
+            localStorage.setItem('BACKUP_customReverseQuestions', JSON.stringify(reverseData));
+            console.log('✅ 全量备份恢复反向提问问题库:', reverseData.length, '条');
+        } else {
+            console.log('ℹ️ 全量备份中未找到 customReverseQuestions');
+            console.log('📦 备份数据中的 localforage 字段:', data.localforage ? Object.keys(data.localforage) : '无');
+        }
+    } catch (err) {
+        console.warn('恢复反向问题库失败:', err);
+    }
+
         // 修复 sessionList 中的会话 ID：键已被 remap，但值里的 id 字段还是旧 sessionId
         if (needRemap) {
             try {

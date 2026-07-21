@@ -1469,27 +1469,42 @@ if (submitMomentBtn) {
     submitMomentBtn.addEventListener('click', function() {
         const input = document.getElementById('moments-input');
         const text = input ? input.value.trim() : '';
+        
+        // 获取图片（从 file input 获取）
+        const mediaInput = document.getElementById('moments-media-input');
+        const file = mediaInput && mediaInput.files && mediaInput.files[0];
+        
+        // 获取预览图中的 base64（如果已有）
         const previewImg = document.getElementById('moments-media-preview-img');
-        const media = previewImg ? previewImg.src : null;
+        const previewSrc = previewImg ? previewImg.src : null;
+        
+        // 决定使用什么作为 media
+        let media = null;
+        if (file) {
+            // 如果有文件对象，传递文件对象
+            media = file;
+            console.log('📸 发布时获取到文件:', file.name);
+        } else if (previewSrc && previewSrc.startsWith('data:image')) {
+            // 如果预览图是 base64，直接使用
+            media = previewSrc;
+            console.log('📸 发布时使用预览图 base64');
+        } else {
+            console.log('📸 没有图片');
+        }
         
         if (window.Moments) {
             window.Moments.publishMoment(text, media);
         }
-        // 关闭发布面板
+        
+        // 关闭发布面板并清空（但保留 file input 中的文件？）
         const overlay = document.getElementById('moments-publish-overlay');
         if (overlay) overlay.style.display = 'none';
         if (input) input.value = '';
         
-        // 🔥 修复：完全清空图片预览
+        // 清空图片预览
         const preview = document.getElementById('moments-media-preview');
-        if (preview) {
-            preview.style.display = 'none';
-        }
-        if (previewImg) {
-            previewImg.src = '';  // 清空图片源
-        }
-        // 同时清空 file input
-        const mediaInput = document.getElementById('moments-media-input');
+        if (preview) preview.style.display = 'none';
+        if (previewImg) previewImg.src = '';
         if (mediaInput) mediaInput.value = '';
     });
 }
@@ -1568,82 +1583,42 @@ if (boostCommentBtn) {
 }
 
 
-// 朋友圈图片上传（带压缩功能）
-const momentsMediaInput = document.getElementById('moments-media-input');
-if (momentsMediaInput) {
-    momentsMediaInput.addEventListener('change', function(e) {
+// 朋友圈图片上传（仅预览，不压缩）
+const momentsMediaInputEl = document.getElementById('moments-media-input');
+if (momentsMediaInputEl) {
+    momentsMediaInputEl.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) {
             console.log('❌ 没有选择文件');
             return;
         }
-        
+
         console.log('📸 选择文件:', file.name, (file.size / 1024 / 1024).toFixed(2), 'MB');
-        
-        // 如果图片小于2MB，直接读取
-        if (file.size <= 2 * 1024 * 1024) {
-            const reader = new FileReader();
-            reader.onload = function(ev) {
-                const result = ev.target.result;
-                const img = document.getElementById('moments-media-preview-img');
-                if (img) {
-                    img.src = result;
-                    const preview = document.getElementById('moments-media-preview');
-                    if (preview) preview.style.display = 'block';
-                    console.log('📸 图片已加载，大小:', (result.length / 1024 / 1024).toFixed(2), 'MB');
-                }
-            };
-            reader.readAsDataURL(file);
-            this.value = '';
+
+        if (file.size > 15 * 1024 * 1024) {
+            showNotification('图片超过 15MB 限制', 'error');
+            // 注意：这里不重置 value，保留文件
             return;
         }
-        
-        // 图片大于2MB，使用 Canvas 压缩
-        showNotification('图片较大，正在压缩...', 'info', 1500);
-        
+
         const reader = new FileReader();
         reader.onload = function(ev) {
-            const img = new Image();
-            img.onload = function() {
-                // 计算压缩尺寸
-                let width = img.width;
-                let height = img.height;
-                const maxSize = 800; // 最大边800px
-                if (width > maxSize || height > maxSize) {
-                    if (width > height) {
-                        height = Math.round(height * maxSize / width);
-                        width = maxSize;
-                    } else {
-                        width = Math.round(width * maxSize / height);
-                        height = maxSize;
-                    }
-                }
-                
-                // 绘制到 Canvas 并压缩
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(img, 0, 0, width, height);
-                
-                // 输出为 JPEG，质量 0.7
-                const compressed = canvas.toDataURL('image/jpeg', 0.7);
-                console.log('📸 压缩完成，原大小:', (ev.target.result.length / 1024 / 1024).toFixed(2), 'MB →', (compressed.length / 1024 / 1024).toFixed(2), 'MB');
-                
-                const previewImg = document.getElementById('moments-media-preview-img');
-                if (previewImg) {
-                    previewImg.src = compressed;
-                    const preview = document.getElementById('moments-media-preview');
-                    if (preview) preview.style.display = 'block';
-                }
-                showNotification('图片已压缩', 'success', 1000);
-            };
-            img.src = ev.target.result;
+            const dataUrl = ev.target.result;
+            const img = document.getElementById('moments-media-preview-img');
+            if (img) {
+                img.src = dataUrl;
+                const preview = document.getElementById('moments-media-preview');
+                if (preview) preview.style.display = 'block';
+                console.log('✅ 预览图已加载');
+            }
+        };
+        reader.onerror = function(err) {
+            console.error('❌ 图片读取失败:', err);
+            showNotification('图片读取失败', 'error');
         };
         reader.readAsDataURL(file);
-        this.value = '';
+        // ✅ 删除 this.value = ''; 这行！
+        // 保留文件在 input 中，供发布时使用
     });
 }
 // ============================================================
@@ -2064,20 +2039,16 @@ document.getElementById('decide-custom-btn')?.addEventListener('click', function
         });
 
         // 8. 反向提问增强
-        document.getElementById('boost-askme-btn')?.addEventListener('click', function() {
-            if (typeof window.addAskMeBoost === 'function') {
-                window.addAskMeBoost('partner');
-                var hint = document.getElementById('askme-boost-hint');
-                if (hint) {
-                    hint.style.display = 'block';
-                    if (typeof window.getAskMeBoostHint === 'function') {
-                        hint.textContent = '🌸 已邀请梦角～ ' + window.getAskMeBoostHint('partner');
-                    } else {
-                        hint.textContent = '🌸 已邀请梦角～ 接下来一小时内提问概率提升！';
-                    }
-                }
-            }
-        });
+       document.getElementById('boost-askme-btn')?.addEventListener('click', function() {
+    if (typeof window.addAskMeBoost === 'function') {
+        window.addAskMeBoost('partner');
+        var hint = document.getElementById('askme-boost-hint');
+        if (hint) {
+            hint.style.display = 'block';
+            hint.textContent = '🌸 已邀请梦角～ 接下来一小时内提问概率提升！';
+        }
+    }
+});
 
         // 9. 工具函数：从 groupChatSettings 加载成员到复选框
         function loadGcDecisionMembers() {
