@@ -1294,7 +1294,7 @@ window.closeImageViewer = closeImageViewer;
         if (!data || data.length === 0) {
             showNotification('⚠️ 没有朋友圈数据可导出', 'warning');
             return;
-        }
+        },
 
         // 🔥 获取头像数据
         let avatars = {};
@@ -1421,7 +1421,7 @@ importData: function(file) {
         };
         reader.readAsText(file);
     });
-}
+  }
 };
 
 // 自动渲染
