@@ -2300,14 +2300,25 @@
 <div class="modal" id="moments-modal" style="z-index:2000;">
     <div class="modal-content" style="max-width:500px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">
         <div class="modal-title" style="flex-shrink:0;">
-            <i class="fas fa-images"></i>
-            <span>朋友圈</span>
-            <div style="margin-left:auto;display:flex;gap:6px;">
-                <button class="modal-btn modal-btn-primary" onclick="document.getElementById('moments-publish-overlay').style.display='flex';document.getElementById('moments-input').focus();" style="padding:4px 12px;font-size:12px;">
-                    <i class="fas fa-plus"></i> 发布
-                </button>
-            </div>
-        </div>
+    <i class="fas fa-images"></i>
+    <span>朋友圈</span>
+    <div style="margin-left:auto;display:flex;gap:6px;">
+        <!-- 🔥 新增：导出按钮 -->
+        <button class="modal-btn modal-btn-secondary" onclick="window.Moments.exportData()" style="padding:4px 12px;font-size:12px;" title="导出朋友圈数据">
+            <i class="fas fa-download"></i> 导出
+        </button>
+        <!-- 🔥 新增：导入按钮 -->
+        <button class="modal-btn modal-btn-secondary" onclick="document.getElementById('moments-import-input').click()" style="padding:4px 12px;font-size:12px;" title="导入朋友圈数据">
+            <i class="fas fa-upload"></i> 导入
+        </button>
+        <!-- 🔥 新增：隐藏的文件输入框 -->
+        <input type="file" id="moments-import-input" accept=".json" style="display:none;" onchange="window.Moments.importData(this.files[0])">
+        <!-- 发布按钮 -->
+        <button class="modal-btn modal-btn-primary" onclick="document.getElementById('moments-publish-overlay').style.display='flex';document.getElementById('moments-input').focus();" style="padding:4px 12px;font-size:12px;">
+            <i class="fas fa-plus"></i> 发布
+        </button>
+    </div>
+</div>
 <div style="display:flex; align-items:center; gap:6px; padding:8px 4px 10px; border-bottom:1px solid var(--border-color); flex-wrap:wrap;">
     <div style="display:flex; align-items:center; gap:5px; flex:0 0 auto;">
         <div id="moment-my-avatar-preview" style="width:28px; height:28px; border-radius:50%; background:var(--border-color); overflow:hidden; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
@@ -2404,6 +2415,160 @@
 <!-- ============================================================ -->
 
 <!-- ============================================================ -->
+
+<!-- ============================================================ -->
+<!-- 🔥 朋友圈头像上传事件绑定 -->
+<!-- ============================================================ -->
+<script>
+(function() {
+    'use strict';
+
+    // 等待 DOM 加载完成
+    function initMomentsAvatarEvents() {
+        // ===== 我 的头像上传 =====
+        const setMyAvatarBtn = document.getElementById('moment-set-my-avatar');
+        const myAvatarInput = document.getElementById('moment-my-avatar-input');
+        const myAvatarPreview = document.getElementById('moment-my-avatar-preview');
+
+        if (setMyAvatarBtn && myAvatarInput) {
+            setMyAvatarBtn.addEventListener('click', function() {
+                myAvatarInput.click();
+            });
+
+            myAvatarInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                // 检查文件大小（限制 2MB）
+                if (file.size > 2 * 1024 * 1024) {
+                    alert('头像图片不能超过 2MB');
+                    this.value = '';
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    const avatarData = ev.target.result;
+                    
+                    // 更新预览
+                    if (myAvatarPreview) {
+                        myAvatarPreview.innerHTML = '<img src="' + avatarData + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                    }
+                    
+                    // 🔥 保存头像数据到 window.momentAvatars
+                    window.momentAvatars = window.momentAvatars || {};
+                    window.momentAvatars['me'] = avatarData;
+                    
+                    // 保存到 localStorage
+                    try {
+                        localStorage.setItem('momentAvatars', JSON.stringify(window.momentAvatars));
+                        console.log('✅ 我的朋友圈头像已保存');
+                    } catch (err) {
+                        console.warn('保存头像失败:', err);
+                    }
+                };
+                reader.readAsDataURL(file);
+                this.value = '';
+            });
+        }
+
+        // ===== 梦角 的头像上传 =====
+        const setPartnerAvatarBtn = document.getElementById('moment-set-partner-avatar');
+        const partnerAvatarInput = document.getElementById('moment-partner-avatar-input');
+        const partnerAvatarPreview = document.getElementById('moment-partner-avatar-preview');
+
+        if (setPartnerAvatarBtn && partnerAvatarInput) {
+            setPartnerAvatarBtn.addEventListener('click', function() {
+                partnerAvatarInput.click();
+            });
+
+            partnerAvatarInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                if (file.size > 2 * 1024 * 1024) {
+                    alert('头像图片不能超过 2MB');
+                    this.value = '';
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    const avatarData = ev.target.result;
+                    
+                    if (partnerAvatarPreview) {
+                        partnerAvatarPreview.innerHTML = '<img src="' + avatarData + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                    }
+                    
+                    window.momentAvatars = window.momentAvatars || {};
+                    window.momentAvatars['partner'] = avatarData;
+                    
+                    try {
+                        localStorage.setItem('momentAvatars', JSON.stringify(window.momentAvatars));
+                        console.log('✅ 梦角的朋友圈头像已保存');
+                    } catch (err) {
+                        console.warn('保存头像失败:', err);
+                    }
+                };
+                reader.readAsDataURL(file);
+                this.value = '';
+            });
+        }
+
+        // ===== 清除头像 =====
+        const clearAvatarBtn = document.getElementById('moment-avatar-clear-btn');
+        if (clearAvatarBtn) {
+            clearAvatarBtn.addEventListener('click', function() {
+                if (confirm('确定清除所有朋友圈头像吗？')) {
+                    window.momentAvatars = {};
+                    try {
+                        localStorage.removeItem('momentAvatars');
+                    } catch (err) {}
+                    
+                    if (myAvatarPreview) {
+                        myAvatarPreview.innerHTML = '<i class="fas fa-user" style="font-size:12px;color:var(--text-secondary);"></i>';
+                    }
+                    if (partnerAvatarPreview) {
+                        partnerAvatarPreview.innerHTML = '<i class="fas fa-user" style="font-size:12px;color:var(--text-secondary);"></i>';
+                    }
+                    console.log('✅ 朋友圈头像已清除');
+                }
+            });
+        }
+
+        // ===== 加载已保存的头像 =====
+        function loadSavedAvatars() {
+            try {
+                const stored = localStorage.getItem('momentAvatars');
+                if (stored) {
+                    const avatars = JSON.parse(stored);
+                    window.momentAvatars = avatars;
+                    
+                    if (avatars['me'] && myAvatarPreview) {
+                        myAvatarPreview.innerHTML = '<img src="' + avatars['me'] + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                    }
+                    if (avatars['partner'] && partnerAvatarPreview) {
+                        partnerAvatarPreview.innerHTML = '<img src="' + avatars['partner'] + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                    }
+                    console.log('✅ 已加载朋友圈头像');
+                }
+            } catch (err) {
+                console.warn('加载头像失败:', err);
+            }
+        }
+
+        // 延迟加载头像（等待 DOM 完全渲染）
+        setTimeout(loadSavedAvatars, 500);
+    }
+
+    // 页面加载完成后初始化
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        initMomentsAvatarEvents();
+    } else {
+        document.addEventListener('DOMContentLoaded', initMomentsAvatarEvents);
+    }
+})();
+</script>
     <!-- == 核心层 == -->
     <script src="js/features/decision.js"></script>
     <script src="js/config.js"></script>

@@ -195,22 +195,27 @@ async function getByMode(mode) {
         return '';
     }
 
-    function getAuthorInfo(author) {
-        var isMe = author === 'me' || author === 'me_gc';
-        var isPartner = author === 'partner';
-        var s = typeof settings !== 'undefined' ? settings : {};
-        var name = '未知';
-        var avatar = '';
+function getAuthorInfo(author) {
+    var isMe = author === 'me' || author === 'me_gc';
+    var isPartner = author === 'partner';
+    var s = typeof settings !== 'undefined' ? settings : {};
+    var name = '未知';
+    var avatar = '';
 
-        if (isMe) {
-            name = s.myName || '我';
-            avatar = getAvatarFromElement('#my-avatar') || s.myAvatar || '';
-        } else if (isPartner) {
-            name = s.partnerName || '梦角';
-            avatar = getAvatarFromElement('#partner-avatar') || s.partnerAvatar || '';
-        }
-        return { name: name, avatar: avatar, isMe: isMe, isPartner: isPartner };
+    // 🔥 优先从 momentAvatars 读取头像
+    if (window.momentAvatars && window.momentAvatars[author]) {
+        avatar = window.momentAvatars[author];
     }
+
+    if (isMe) {
+        name = s.myName || '我';
+        if (!avatar) avatar = getAvatarFromElement('#my-avatar') || s.myAvatar || '';
+    } else if (isPartner) {
+        name = s.partnerName || '梦角';
+        if (!avatar) avatar = getAvatarFromElement('#partner-avatar') || s.partnerAvatar || '';
+    }
+    return { name: name, avatar: avatar, isMe: isMe, isPartner: isPartner };
+}
 
     // ========== 时间格式化 ==========
     function getTimeAgo(timestamp) {
@@ -1280,12 +1285,144 @@ window.closeImageViewer = closeImageViewer;
         showReplyInputWithSticker: noop,
         cancelReplyInput: noop,
         openReplyStickerPicker: noop,
-        sendCommentWithSticker: noop
-    };
+        sendCommentWithSticker: noop,
 
-// ============================================================
-// 🔥 初始化：直接渲染（存储由 state.js 管理）
-// ============================================================
+    // ===== 🔥 新增：独立导出导入 =====
+    exportData: async function() {
+    try {
+        const data = await this.getAll();
+        if (!data || data.length === 0) {
+            showNotification('⚠️ 没有朋友圈数据可导出', 'warning');
+            return;
+        }
+
+        // 🔥 获取头像数据
+        let avatars = {};
+        try {
+            if (window.momentAvatars) {
+                avatars = window.momentAvatars;
+            } else {
+                const stored = localStorage.getItem('momentAvatars');
+                if (stored) avatars = JSON.parse(stored);
+            }
+        } catch (e) {
+            console.warn('读取头像数据失败:', e);
+        }
+
+        let withImage = 0;
+        data.forEach(m => {
+            if (m.media && typeof m.media === 'string' && m.media.length > 100) {
+                withImage++;
+            }
+        });
+
+        const exportObj = {
+            version: '1.1',  // 🔥 升级版本号
+            exportType: 'moments',
+            exportDate: new Date().toISOString(),
+            totalCount: data.length,
+            withImage: withImage,
+            data: data,
+            avatars: avatars  // 🔥 新增：导出头像数据
+        };
+
+        const jsonStr = JSON.stringify(exportObj, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `朋友圈备份_${new Date().toISOString().slice(0, 10)}.json`;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+        const avatarCount = Object.keys(avatars).length;
+        showNotification(`✅ 已导出 ${data.length} 条朋友圈数据${avatarCount > 0 ? `，包含 ${avatarCount} 个头像` : ''}`, 'success');
+    } catch (e) {
+        console.error('导出朋友圈失败:', e);
+        showNotification('❌ 导出失败', 'error');
+    }
+},
+importData: function(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                let rawText = e.target.result;
+                if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
+                const imported = JSON.parse(rawText);
+
+                if (imported.exportType !== 'moments') {
+                    showNotification('❌ 不是有效的朋友圈备份文件', 'error');
+                    reject(new Error('Invalid format'));
+                    return;
+                }
+
+                if (!imported.data || !Array.isArray(imported.data) || imported.data.length === 0) {
+                    showNotification('⚠️ 文件中没有朋友圈数据', 'warning');
+                    reject(new Error('No data'));
+                    return;
+                }
+
+                let withImage = 0;
+                imported.data.forEach(m => {
+                    if (m.media && typeof m.media === 'string' && m.media.length > 100) {
+                        withImage++;
+                    }
+                });
+
+                // 🔥 检查是否有头像数据
+                const hasAvatars = imported.avatars && Object.keys(imported.avatars).length > 0;
+                let avatarCount = hasAvatars ? Object.keys(imported.avatars).length : 0;
+
+                const confirmMsg = `即将导入 ${imported.data.length} 条朋友圈数据\n其中包含图片 ${withImage} 条${hasAvatars ? `\n包含 ${avatarCount} 个头像` : ''}\n\n⚠️ 将覆盖当前所有朋友圈数据，确定继续吗？`;
+                if (!confirm(confirmMsg)) {
+                    resolve(false);
+                    return;
+                }
+
+                // 确保每条数据的 media 都是字符串
+                imported.data.forEach(m => {
+                    if (m.media && typeof m.media !== 'string') {
+                        m.media = String(m.media);
+                    }
+                });
+
+                // 🔥 保存朋友圈数据
+                await window.Moments.saveAll(imported.data);
+
+                // 🔥 保存头像数据
+                if (hasAvatars) {
+                    try {
+                        window.momentAvatars = imported.avatars;
+                        localStorage.setItem('momentAvatars', JSON.stringify(imported.avatars));
+                        console.log('✅ 已导入头像数据:', avatarCount, '个');
+                    } catch (e) {
+                        console.warn('保存头像数据失败:', e);
+                    }
+                }
+
+                console.log('✅ 已导入', imported.data.length, '条朋友圈数据');
+                window.Moments.render('moments-list', 'partner');
+                showNotification(`✅ 成功导入 ${imported.data.length} 条朋友圈数据${hasAvatars ? `，包含 ${avatarCount} 个头像` : ''}`, 'success');
+                resolve(true);
+
+            } catch (e) {
+                console.error('导入朋友圈失败:', e);
+                showNotification('❌ 导入失败，文件格式错误', 'error');
+                reject(e);
+            }
+        };
+        reader.onerror = function(e) {
+            showNotification('❌ 读取文件失败', 'error');
+            reject(e);
+        };
+        reader.readAsText(file);
+    });
+}
+};
 
 // 自动渲染
 if (document.readyState === 'complete' || document.readyState === 'interactive') {

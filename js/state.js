@@ -373,6 +373,21 @@ let momentsBoost = {
 };
 let momentsAutoTimers = [];
 
+// ===== 🔥 新增：朋友圈头像数据 =====
+let momentAvatars = {};
+// 从 localStorage 加载头像数据
+try {
+    const stored = localStorage.getItem('momentAvatars');
+    if (stored) {
+        momentAvatars = JSON.parse(stored);
+        console.log('📸 加载朋友圈头像数据:', Object.keys(momentAvatars).length, '个');
+    }
+} catch (e) {
+    console.warn('加载朋友圈头像数据失败:', e);
+}
+// 暴露到全局
+window.momentAvatars = momentAvatars;
+
 // 朋友圈 DOM 引用
 const MomentsDOMElements = {
     modal: document.getElementById('moments-modal'),
@@ -475,3 +490,45 @@ window.momentsBoost = momentsBoost;
 // 暴露 settings 到全局
 window.settings = settings;
 window.momentsStorage = momentsStorage;
+
+// ===== 🔥 新增：暴露朋友圈导入导出函数 =====
+window.exportMoments = function() {
+    if (window.Moments && typeof window.Moments.exportData === 'function') {
+        window.Moments.exportData();
+    } else {
+        if (typeof showNotification === 'function') {
+            showNotification('⚠️ 朋友圈功能未加载', 'warning');
+        }
+    }
+};
+
+window.importMoments = function(file) {
+    if (window.Moments && typeof window.Moments.importData === 'function') {
+        window.Moments.importData(file);
+    } else {
+        if (typeof showNotification === 'function') {
+            showNotification('⚠️ 朋友圈功能未加载', 'warning');
+        }
+    }
+};
+
+// ===== 🔥 新增：保存朋友圈头像数据 =====
+window.saveMomentAvatars = function() {
+    try {
+        if (window.momentAvatars) {
+            localStorage.setItem('momentAvatars', JSON.stringify(window.momentAvatars));
+            console.log('✅ 朋友圈头像数据已保存');
+        }
+    } catch (e) {
+        console.warn('保存朋友圈头像数据失败:', e);
+    }
+};
+
+// 监听页面关闭前保存头像数据
+window.addEventListener('beforeunload', function() {
+    if (window.momentAvatars) {
+        try {
+            localStorage.setItem('momentAvatars', JSON.stringify(window.momentAvatars));
+        } catch (e) {}
+    }
+});
