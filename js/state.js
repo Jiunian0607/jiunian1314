@@ -491,6 +491,16 @@ window.momentsBoost = momentsBoost;
 window.settings = settings;
 window.momentsStorage = momentsStorage;
 
+// ===== 🔥 新增：群聊数据 =====
+if (!window.groupChatData) {
+    window.groupChatData = {
+        enabled: false,
+        members: [],
+        showName: true
+    };
+    console.log('👥 群聊数据已初始化');
+}
+
 // ===== 🔥 新增：暴露朋友圈导入导出函数 =====
 window.exportMoments = function() {
     if (window.Moments && typeof window.Moments.exportData === 'function') {

@@ -2342,15 +2342,15 @@
         清除
     </button>
 </div>
-        <!-- 模式切换 Tab -->
-        <div style="display:flex;gap:6px;padding:0 4px 10px;flex-shrink:0;border-bottom:1px solid var(--border-color);">
-            <button class="moments-tab active" id="moments-tab-partner" style="flex:1;padding:8px;border:none;border-radius:10px;background:var(--accent-color);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">
-                ❤️ 我和TA
-            </button>
-            <button class="moments-tab" id="moments-tab-group" style="flex:1;padding:8px;border:none;border-radius:10px;background:var(--secondary-bg);color:var(--text-secondary);cursor:pointer;font-size:13px;">
-                👥 群成员
-            </button>
-        </div>
+<!-- 模式切换 Tab -->
+<div style="display:flex;gap:6px;padding:0 4px 10px;flex-shrink:0;border-bottom:1px solid var(--border-color);">
+    <button class="moments-tab active" id="moments-tab-partner" onclick="window.Moments.setMode('partner');window.Moments.render('moments-list','partner');" style="flex:1;padding:8px;border:none;border-radius:10px;background:var(--accent-color);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">
+        ❤️ 我和TA
+    </button>
+    <button class="moments-tab" id="moments-tab-group" onclick="window.Moments.setMode('group');window.Moments.render('moments-list','group');" style="flex:1;padding:8px;border:none;border-radius:10px;background:var(--secondary-bg);color:var(--text-secondary);cursor:pointer;font-size:13px;">
+        👥 群成员
+    </button>
+</div>
 
         <!-- 召唤按钮 -->
         <div style="display:flex;gap:6px;padding:8px 0;flex-shrink:0;flex-wrap:wrap;">

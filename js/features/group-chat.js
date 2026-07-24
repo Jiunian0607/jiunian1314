@@ -40,6 +40,25 @@ var groupChatSettings = (function() {
         return saved;
     } catch(e) { return { enabled: false, showAvatar: true, showName: true, members: [] }; }
 })();
+
+// ===== 🔥 新增：加载完成后同步到 window.groupChatData =====
+(function syncGroupChatData() {
+    if (!window.groupChatData) {
+        window.groupChatData = {
+            enabled: false,
+            members: [],
+            showName: true
+        };
+    }
+    // 从 groupChatSettings 同步到 window.groupChatData
+    window.groupChatData.enabled = groupChatSettings.enabled;
+    window.groupChatData.members = groupChatSettings.members || [];
+    window.groupChatData.showName = groupChatSettings.showName !== false;
+    console.log('👥 群聊数据已同步，成员:', window.groupChatData.members.length + '人');
+})();
+
+; // 🔥 添加分号分隔两个自执行函数
+
 (function loadGroupAvatars() {
     if (!window.localforage) return;
     var members = groupChatSettings.members || [];
@@ -54,6 +73,7 @@ var groupChatSettings = (function() {
         if (typeof renderGroupMembersList === 'function') renderGroupMembersList();
     });
 })();
+
 var _groupMemberAvatarDataUrl = null;
 
 function saveGroupChatSettings() {
@@ -80,6 +100,31 @@ function saveGroupChatSettings() {
             });
         });
     }
+
+    // ===== 🔥 新增：同步到 window.groupChatData =====
+    if (!window.groupChatData) {
+        window.groupChatData = {
+            enabled: false,
+            members: [],
+            showName: true
+        };
+    }
+    window.groupChatData.enabled = groupChatSettings.enabled;
+    window.groupChatData.members = groupChatSettings.members || [];
+    window.groupChatData.showName = groupChatSettings.showName !== false;
+    console.log('📸 群聊数据已同步到 window.groupChatData:', {
+        enabled: window.groupChatData.enabled,
+        members: window.groupChatData.members.length + '人'
+    });
+
+    // 同时保存到 localStorage 供 moments.js 读取
+    try {
+        localStorage.setItem('groupChatData', JSON.stringify({
+            enabled: groupChatSettings.enabled,
+            members: groupChatSettings.members || [],
+            showName: groupChatSettings.showName !== false
+        }));
+    } catch(e) {}
 }
 
 function renderGroupMembersList() {
@@ -108,32 +153,54 @@ function updateGroupModeUI() {
     var status = document.getElementById('group-mode-status');
     var displaySection = document.getElementById('group-display-section');
     var membersSection = document.getElementById('group-members-section');
-    if (!pill) return;
-    if (groupChatSettings.enabled) {
-        pill.style.background = 'var(--accent-color)';
-        knob.style.left = '22px';
-        status.textContent = '已开启 — 收到的消息随机显示成员';
-        displaySection.style.display = 'block';
-        membersSection.style.display = 'block';
-    } else {
-        pill.style.background = 'var(--border-color)';
-        knob.style.left = '3px';
-        status.textContent = '已关闭 — 点击开启';
-        displaySection.style.display = 'none';
-        membersSection.style.display = 'none';
+    
+    // ===== 主开关 UI 更新 =====
+    if (pill) {
+        if (groupChatSettings.enabled) {
+            pill.style.background = 'var(--accent-color)';
+            if (knob) knob.style.left = '22px';
+            if (status) status.textContent = '已开启 — 收到的消息随机显示成员';
+            if (displaySection) displaySection.style.display = 'block';
+            if (membersSection) membersSection.style.display = 'block';
+        } else {
+            pill.style.background = 'var(--border-color)';
+            if (knob) knob.style.left = '3px';
+            if (status) status.textContent = '已关闭 — 点击开启';
+            if (displaySection) displaySection.style.display = 'none';
+            if (membersSection) membersSection.style.display = 'none';
+        }
     }
+    
+    // ===== 🔥 同步更新 window.groupChatData =====
+    if (window.groupChatData) {
+        window.groupChatData.enabled = groupChatSettings.enabled;
+        window.groupChatData.members = groupChatSettings.members || [];
+        window.groupChatData.showName = groupChatSettings.showName !== false;
+        try {
+            localStorage.setItem('groupChatData', JSON.stringify({
+                enabled: groupChatSettings.enabled,
+                members: groupChatSettings.members || [],
+                showName: groupChatSettings.showName !== false
+            }));
+        } catch(e) {}
+    }
+    
+    // ===== 头像开关 UI 更新 =====
     var avatarPill = document.getElementById('group-show-avatar-pill');
     var avatarKnob = document.getElementById('group-show-avatar-knob');
     if (avatarPill) {
         avatarPill.style.background = groupChatSettings.showAvatar ? 'var(--accent-color)' : 'var(--border-color)';
-        avatarKnob.style.right = groupChatSettings.showAvatar ? '3px' : '19px';
+        if (avatarKnob) avatarKnob.style.right = groupChatSettings.showAvatar ? '3px' : '19px';
     }
+    
+    // ===== 名称开关 UI 更新 =====
     var namePill = document.getElementById('group-show-name-pill');
     var nameKnob = document.getElementById('group-show-name-knob');
     if (namePill) {
         namePill.style.background = groupChatSettings.showName ? 'var(--accent-color)' : 'var(--border-color)';
-        nameKnob.style.right = groupChatSettings.showName ? '3px' : '19px';
+        if (nameKnob) nameKnob.style.right = groupChatSettings.showName ? '3px' : '19px';
     }
+    
     renderGroupMembersList();
 }
 
@@ -142,8 +209,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (groupModeToggle) {
         groupModeToggle.addEventListener('click', function() {
             groupChatSettings.enabled = !groupChatSettings.enabled;
-            saveGroupChatSettings();
-            updateGroupModeUI();
+            saveGroupChatSettings();  // 这里会调用同步
+            updateGroupModeUI();      // 这里也会同步
+            // ===== 🔥 新增：打印日志方便调试 =====
+            console.log('📸 群聊模式:', groupChatSettings.enabled ? '✅ 已开启' : '❌ 已关闭');
+            console.log('📸 window.groupChatData.enabled:', window.groupChatData?.enabled);
         });
     }
     var showAvatarToggle = document.getElementById('group-show-avatar-toggle');
@@ -228,16 +298,21 @@ window.saveGroupMember = function() {
         if (!groupChatSettings.members) groupChatSettings.members = [];
         groupChatSettings.members.push(member);
     }
-    saveGroupChatSettings();
+    saveGroupChatSettings();  // 这里会同步
     renderGroupMembersList();
+    
+    // ===== 🔥 新增：确认同步状态 =====
+    console.log('📸 群成员已更新，共', window.groupChatData?.members?.length || 0, '人');
+    
     window.closeGroupMemberEdit();
 };
 
 window.deleteGroupMember = function(idx) {
     if (!confirm('确定删除该成员吗？')) return;
     groupChatSettings.members.splice(idx, 1);
-    saveGroupChatSettings();
+    saveGroupChatSettings();  // 这里会同步
     renderGroupMembersList();
+    console.log('📸 群成员已删除，剩余', window.groupChatData?.members?.length || 0, '人');
 };
 
 window.getGroupMemberForMessage = function(msgId) {

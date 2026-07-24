@@ -176,10 +176,14 @@ async function saveAll(data) {
 async function getByMode(mode) {
     var all = await getAll();
     if (mode === 'partner') {
-        return all.filter(function(m) { return m.author === 'partner' || m.author === 'me' || m.author === 'me_gc'; });
+        return all.filter(function(m) { 
+            return m.author === 'partner' || m.author === 'me' || m.author === 'me_gc'; 
+        });
     }
     if (mode === 'group') {
-        return all.filter(function(m) { return m.author && m.author.startsWith('gc_'); });
+        return all.filter(function(m) { 
+            return m.author && m.author.startsWith('gc_'); 
+        });
     }
     return all;
 }
@@ -275,6 +279,14 @@ function getAuthorInfo(author) {
         var info = getAuthorInfo(m.author);
         var isMyMoment = info.isMe || m.author === 'me';
 
+    // ===== 🔥 新增：如果是群成员，使用群成员信息 =====
+    if (m.author && m.author.startsWith('gc_')) {
+        info.name = m.gcName || '群成员';
+        if (m.gcAvatar) {
+            info.avatar = m.gcAvatar;
+        }
+    }
+
         // 头像
         var avatarHtml = '<i class="fas fa-user" style="font-size:16px;color:var(--text-secondary);"></i>';
         if (info.avatar) {
@@ -292,14 +304,23 @@ if (m.media) {
     }
 }
 
-        // 点赞
+        // 点赞 - 显示所有点赞者名字
         var myLiked = m.likes && m.likes.indexOf('me') > -1;
         var likeCount = (m.likes || []).length;
         var likeNames = [];
         if (m.likes) {
             m.likes.forEach(function(l) {
-                if (l === 'me') likeNames.push((window.settings && window.settings.myName) || '我');
-                else if (l === 'partner') likeNames.push((window.settings && window.settings.partnerName) || '梦角');
+                if (l === 'me') {
+                    likeNames.push((window.settings && window.settings.myName) || '我');
+                } else if (l === 'partner') {
+                    likeNames.push((window.settings && window.settings.partnerName) || '梦角');
+                } else if (l && l.startsWith('gc_')) {
+                    // 🔥 群成员点赞：显示群成员名字
+                    var gcName = l.replace('gc_', '');
+                    var members = window.groupChatData?.members || [];
+                    var member = members.find(function(m) { return m.name === gcName; });
+                    likeNames.push(member ? member.name : gcName);
+                }
             });
         }
         var likesHtml = likeNames.length ? '<div class="moment-likes">❤️ ' + likeNames.join('、') + '</div>' : '';
@@ -383,31 +404,68 @@ if (m.comments && m.comments.length) {
     }
 
     // ========== 渲染 ==========
-    function render(containerId, mode) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
+function render(containerId, mode) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
 
-        var targetMode = mode || currentMode;
-        currentMode = targetMode;
-        window.momentsMode = targetMode;
+    var targetMode = mode || currentMode;
+    currentMode = targetMode;
+    window.momentsMode = targetMode;
 
-        getByMode(targetMode).then(function(moments) {
-            if (!moments.length) {
-                container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary);">' +
-                    '<i class="fas fa-images" style="font-size:32px;opacity:0.3;display:block;margin-bottom:12px;"></i>' +
-                    (targetMode === 'partner' ? '还没有朋友圈动态，发一条吧 ✦' : '群成员还没有发朋友圈') +
-                '</div>';
-                return;
-            }
+    getByMode(targetMode).then(function(moments) {
+        if (!moments.length) {
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary);">' +
+                '<i class="fas fa-images" style="font-size:32px;opacity:0.3;display:block;margin-bottom:12px;"></i>' +
+                (targetMode === 'partner' ? '还没有朋友圈动态，发一条吧 ✦' : '群成员还没有发朋友圈') +
+            '</div>';
+            // 🔥 即使没有数据，也要更新高亮
+            updateTabHighlight(targetMode);
+            return;
+        }
 
-            var show = moments.slice(0, 20);
-            var html = '';
-            for (var i = 0; i < show.length; i++) {
-                html += buildMomentCard(show[i]);
-            }
-            container.innerHTML = html;
-        });
+        var show = moments.slice(0, 20);
+        var html = '';
+        for (var i = 0; i < show.length; i++) {
+            html += buildMomentCard(show[i]);
+        }
+        container.innerHTML = html;
+        
+        // 🔥 更新标签高亮
+        updateTabHighlight(targetMode);
+    });
+}
+
+// ===== 🔥 新增：更新标签高亮函数 =====
+function updateTabHighlight(mode) {
+    var tabPartner = document.getElementById('moments-tab-partner');
+    var tabGroup = document.getElementById('moments-tab-group');
+    
+    if (!tabPartner || !tabGroup) return;
+    
+    if (mode === 'partner' || mode === undefined) {
+        // 切换到「我和TA」
+        tabPartner.className = 'moments-tab active';
+        tabPartner.style.background = 'var(--accent-color)';
+        tabPartner.style.color = '#fff';
+        tabPartner.style.border = 'none';
+        
+        tabGroup.className = 'moments-tab';
+        tabGroup.style.background = 'var(--secondary-bg)';
+        tabGroup.style.color = 'var(--text-secondary)';
+        tabGroup.style.border = '1px solid var(--border-color)';
+    } else {
+        // 切换到「群成员」
+        tabGroup.className = 'moments-tab active';
+        tabGroup.style.background = 'var(--accent-color)';
+        tabGroup.style.color = '#fff';
+        tabGroup.style.border = 'none';
+        
+        tabPartner.className = 'moments-tab';
+        tabPartner.style.background = 'var(--secondary-bg)';
+        tabPartner.style.color = 'var(--text-secondary)';
+        tabPartner.style.border = '1px solid var(--border-color)';
     }
+}
 
     function loadMore() {
         var container = document.getElementById('moments-list');
@@ -815,64 +873,110 @@ function insertCommentSticker(momentId, stickerIndex) {
         }
     }
 
-    // ========== 梦角自动回复 ==========
-    async function simulateReply(id) {
-        var all = await getAll();
-        var m = all.find(function(item) { return item.id === id; });
-        if (!m) return;
+ // ========== 梦角自动回复（支持群成员） ==========
+async function simulateReply(id) {
+    var all = await getAll();
+    var m = all.find(function(item) { return item.id === id; });
+    if (!m) return;
 
-        var replyPool = await getReplyPool();
-        if (!replyPool.length) return;
+    var replyPool = await getReplyPool();
+    if (!replyPool.length) return;
 
-        var stickers = getStickerLibrary();
+    var stickers = getStickerLibrary();
 
-        var count = 1 + Math.floor(Math.random() * Math.min(3, replyPool.length));
-        var text = '';
-        for (var i = 0; i < count; i++) {
-            text += replyPool[Math.floor(Math.random() * replyPool.length)] + ' ';
-        }
-        text = text.trim();
-
-        var sticker = null;
-        var stickerRand = Math.random();
-        if (stickerRand < 0.10 && stickers.length > 0) {
-            sticker = stickers[Math.floor(Math.random() * stickers.length)];
-            text = '';
-        } else if (stickerRand < 0.35 && stickers.length > 0) {
-            sticker = stickers[Math.floor(Math.random() * stickers.length)];
-        }
-
-        if (!m.comments) m.comments = [];
-        var hasComments = m.comments.length > 0;
-        if (hasComments && Math.random() < 0.3) {
-            var target = m.comments[Math.floor(Math.random() * m.comments.length)];
-            var targetInfo = getAuthorInfo(target.author);
-            var targetName = target.gcName || targetInfo.name || '成员';
-            m.comments.push({
-                id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-                author: 'partner',
-                text: text,
-                sticker: sticker,
-                replyToName: targetName,
-                replyToAuthor: target.author,
-                timestamp: Date.now(),
-                gcName: (window.settings && window.settings.partnerName) || '梦角'
-            });
+    // 🔥 判断是否应该用群成员回复
+    const isGroupMode = currentMode === 'group' && window.groupChatData && window.groupChatData.enabled;
+    const members = window.groupChatData?.members || [];
+    
+    // 🔥 判断朋友圈类型
+    const isPartnerMoment = m.author === 'partner';  // 梦角发的
+    const isMyMoment = m.author === 'me' || m.author === 'me_gc';  // 我发的
+    const isGroupMoment = m.author && m.author.startsWith('gc_');  // 群成员发的
+    
+    var reactorName = settings.partnerName || '梦角';
+    var reactorAuthor = 'partner';
+    var isPartner = true;
+    
+    // 🔥 判断谁可以回复
+    if (isGroupMoment) {
+        // 群成员的朋友圈：只用群成员回复（梦角不参与）
+        if (isGroupMode && members.length > 0) {
+            var member = members[Math.floor(Math.random() * members.length)];
+            reactorName = member.name || '群成员';
+            reactorAuthor = 'gc_' + reactorName;
+            isPartner = false;
+            console.log('📸 群成员', reactorName, '回复了群成员的朋友圈');
         } else {
-            m.comments.push({
-                id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-                author: 'partner',
-                text: text,
-                sticker: sticker,
-                timestamp: Date.now(),
-                gcName: (window.settings && window.settings.partnerName) || '梦角'
-            });
+            // 没有群成员，不回复
+            return;
         }
-
-        await saveAll(all);
-        render('moments-list', currentMode);
-        showNotification((window.settings && window.settings.partnerName) || '梦角' + ' 评论了你', 'info');
+    } else if (isMyMoment) {
+        // 我的朋友圈：梦角回复，群成员也可以参与
+        if (isGroupMode && members.length > 0 && Math.random() < 0.4) {
+            var member = members[Math.floor(Math.random() * members.length)];
+            reactorName = member.name || '群成员';
+            reactorAuthor = 'gc_' + reactorName;
+            isPartner = false;
+            console.log('📸 群成员', reactorName, '回复了我的朋友圈');
+        }
+        // 否则用梦角回复
+    } else if (isPartnerMoment) {
+        // 梦角的朋友圈：只有梦角回复（群成员不参与）
+        console.log('📸 梦角回复自己的朋友圈（群成员不参与）');
+        // 保持梦角回复
     }
+    // ===== 🔥 核心回复逻辑 =====
+    // 1~3 张字卡组合
+    var count = 1 + Math.floor(Math.random() * 3);  // 1-3 张
+    var text = '';
+    for (var i = 0; i < count; i++) {
+        text += replyPool[Math.floor(Math.random() * replyPool.length)] + ' ';
+    }
+    text = text.trim();
+
+    // 🔥 表情包逻辑
+    var sticker = null;
+    var stickerRand = Math.random();
+    if (stickerRand < 0.10 && stickers.length > 0) {
+        // 10% 概率：只有表情包
+        sticker = stickers[Math.floor(Math.random() * stickers.length)];
+        text = '';
+        console.log('📸', reactorName, '只发了表情包');
+    } else if (stickerRand < 0.30 && stickers.length > 0) {
+        // 20% 概率：文字 + 表情包
+        sticker = stickers[Math.floor(Math.random() * stickers.length)];
+        console.log('📸', reactorName, '发了文字 + 表情包');
+    }
+
+    if (!m.comments) m.comments = [];
+    var hasComments = m.comments.length > 0;
+    
+    var commentData = {
+        id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        author: reactorAuthor,
+        text: text,
+        sticker: sticker,
+        timestamp: Date.now(),
+        gcName: reactorName
+    };
+    
+    // 🔥 30% 概率回复评论（如果有评论的话）
+    if (hasComments && Math.random() < 0.3) {
+        var target = m.comments[Math.floor(Math.random() * m.comments.length)];
+        var targetInfo = getAuthorInfo(target.author);
+        commentData.replyToName = target.gcName || targetInfo.name || '成员';
+        commentData.replyToAuthor = target.author;
+        console.log('📸', reactorName, '回复了', commentData.replyToName);
+    } else {
+        console.log('📸', reactorName, '独立评论了');
+    }
+
+    m.comments.push(commentData);
+
+    await saveAll(all);
+    render('moments-list', currentMode);
+    showNotification(reactorName + ' 评论了你 💬', 'info', 2500);
+}
 
     // ========== 点赞 ==========
     async function toggleLike(id) {
@@ -935,16 +1039,23 @@ function scheduleAutoMoments() {
     // 每天随机发 0~3 条（召唤时增加发圈概率）
     let dayCount = Math.floor(Math.random() * 4);
     if (boostActive) {
-        dayCount = Math.min(dayCount + 2, 5); // 召唤时额外增加 1~2 条
+        dayCount = Math.min(dayCount + 2, 5);
         console.log('📸 召唤加成生效，今天将多发朋友圈');
     }
     
-    const interval = 2 * 60 * 60 * 1000; // 至少间隔2小时
+    const interval = 2 * 60 * 60 * 1000;
 
     for (let i = 0; i < dayCount; i++) {
         const delay = interval + Math.random() * 4 * 60 * 60 * 1000;
         const timer = setTimeout(() => {
-            generateAutoMoment();
+            // ===== 🔥 新增：根据模式选择发圈类型 =====
+            if (currentMode === 'group' && window.groupChatData && window.groupChatData.enabled) {
+                // 群组模式：群成员发圈
+                generateGroupMemberMoment();
+            } else {
+                // 伴侣模式：梦角发圈
+                generateAutoMoment();
+            }
         }, delay);
         autoTimers.push(timer);
     }
@@ -995,6 +1106,84 @@ function scheduleAutoMoments() {
             console.error('自动发圈失败:', err);
         }
     }
+// ===== 🔥 群成员自动发圈（受召唤加成影响） =====
+async function generateGroupMemberMoment() {
+    // 检查群聊是否开启
+    if (!window.groupChatData || !window.groupChatData.enabled) {
+        console.log('📸 群聊模式未开启，跳过群成员发圈');
+        return;
+    }
+    
+    var members = window.groupChatData.members || [];
+    if (members.length === 0) {
+        console.log('📸 没有群成员，跳过发圈');
+        return;
+    }
+    
+    // 🔥 新增：检查召唤加成（发圈概率提升）
+    const boostActive = isBoostActive('moment');
+    // 群成员发圈基础概率 20%，召唤后提升到 55%
+    const postChance = boostActive ? 0.55 : 0.20;
+    if (Math.random() > postChance) {
+        console.log('📸 群成员发圈未触发（概率:', Math.round(postChance * 100) + '%', boostActive ? '召唤加成激活' : '');
+        return;
+    }
+    console.log('📸 群成员发圈触发（概率:', Math.round(postChance * 100) + '%', boostActive ? '召唤加成激活' : '');
+    
+    // 随机选择一个群成员
+    var member = members[Math.floor(Math.random() * members.length)];
+    var memberName = member.name || '群成员';
+    
+    // 生成随机文字（使用回复池）
+    var pool = await getReplyPool();
+    if (!pool.length) return;
+    
+    var count = 3 + Math.floor(Math.random() * Math.min(4, pool.length));
+    var text = '';
+    for (var i = 0; i < count; i++) {
+        text += pool[Math.floor(Math.random() * pool.length)] + ' ';
+    }
+    text = text.trim();
+    
+    // 随机添加表情
+    var emojis = ['💕', '🥺', '✨', '🌙', '❤️', '😘', '🤍', '🌸', '🫶', '☁️'];
+    if (Math.random() < 0.3) {
+        text += ' ' + emojis[Math.floor(Math.random() * emojis.length)];
+    }
+    
+    // 随机添加图片（如果有表情包）
+    var media = null;
+    if (Math.random() < 0.15) {
+        var stickers = getStickerLibrary();
+        if (stickers && stickers.length > 0) {
+            media = stickers[Math.floor(Math.random() * stickers.length)];
+        }
+    }
+    
+    var data = {
+        author: 'gc_' + memberName,
+        text: text,
+        media: media,
+        scene: 'group',
+        timestamp: Date.now(),
+        likes: [],
+        comments: [],
+        reactAttempts: 0,
+        gcName: memberName,
+        gcAvatar: member.avatar || null
+    };
+    
+    try {
+        var id = await saveMoment(data);
+        console.log('📸 群成员', memberName, '发布了朋友圈');
+        if (currentMode === 'group') {
+            render('moments-list', 'group');
+        }
+        scheduleMomentReactions(id);
+    } catch (err) {
+        console.error('群成员发圈失败:', err);
+    }
+}
 // ========== 安排梦角互动 ==========   ← 🔥 新增
 function scheduleMomentReactions(momentId) {
     const delay = 60000 + Math.random() * 120000;
@@ -1009,7 +1198,7 @@ function scheduleMomentReactions(momentId) {
     }
 }
 
-   // ========== 触发互动（修复版 - 恢复原概率和召唤加成） ==========
+ // ========== 触发互动（支持梦角和群成员） ==========
 async function triggerReaction(momentId) {
     console.log('📸 触发互动:', momentId);
     
@@ -1027,90 +1216,142 @@ async function triggerReaction(momentId) {
     }
     m.reactAttempts = (m.reactAttempts || 0) + 1;
 
-    // 🔥 检查召唤加成（从 boostExpiry 读取）
+    // 🔥 检查召唤加成
     const boostLikeActive = isBoostActive('like');
     const boostCommentActive = isBoostActive('comment');
-    const boostMomentActive = isBoostActive('moment');
     
     // 🔥 基础概率 + 召唤加成
-    let likeChance = 0.08;        // 基础 8%
-    let commentChance = 0.08;     // 基础 8%
+    let likeChance = 0.08;
+    let commentChance = 0.08;
     
-    if (boostLikeActive) likeChance = 0.35;      // 召唤后 35%
-    if (boostCommentActive) commentChance = 0.35; // 召唤后 35%
+    if (boostLikeActive) likeChance = 0.35;
+    if (boostCommentActive) commentChance = 0.35;
+
+    // ===== 🔥 判断朋友圈类型 =====
+    const isPartnerMoment = m.author === 'partner';
+    const isMyMoment = m.author === 'me' || m.author === 'me_gc';
+    const isGroupMoment = m.author && m.author.startsWith('gc_');
+    
+    // ===== 🔥 判断互动者 =====
+    const isGroupMode = currentMode === 'group' && window.groupChatData && window.groupChatData.enabled;
+    const members = window.groupChatData?.members || [];
+    
+    let reactors = [];
+    
+    if (isGroupMoment) {
+        if (isGroupMode && members.length > 0 && Math.random() < 0.5) {
+            const shuffled = [...members].sort(() => Math.random() - 0.5);
+            const count = Math.min(1 + Math.floor(Math.random() * 1.5), shuffled.length);
+            reactors = shuffled.slice(0, count).map(r => ({
+                name: r.name || '群成员',
+                isPartner: false,
+                author: 'gc_' + (r.name || '群成员')
+            }));
+            console.log('📸 群成员互动（群成员朋友圈）:', reactors.map(r => r.name).join(', '));
+        }
+    } else if (isMyMoment) {
+        reactors = [{
+            name: settings.partnerName || '梦角',
+            isPartner: true,
+            author: 'partner'
+        }];
+        if (isGroupMode && members.length > 0 && Math.random() < 0.3) {
+            const shuffled = [...members].sort(() => Math.random() - 0.5);
+            const count = Math.min(1 + Math.floor(Math.random() * 1.5), shuffled.length);
+            const groupReactors = shuffled.slice(0, count).map(r => ({
+                name: r.name || '群成员',
+                isPartner: false,
+                author: 'gc_' + (r.name || '群成员')
+            }));
+            reactors = reactors.concat(groupReactors);
+            console.log('📸 群成员也参与了互动（我的朋友圈）:', groupReactors.map(r => r.name).join(', '));
+        }
+    } else if (isPartnerMoment) {
+        reactors = [{
+            name: settings.partnerName || '梦角',
+            isPartner: true,
+            author: 'partner'
+        }];
+        console.log('📸 梦角互动自己的朋友圈（群成员不参与）');
+    } else {
+        reactors = [{
+            name: settings.partnerName || '梦角',
+            isPartner: true,
+            author: 'partner'
+        }];
+    }
 
     let changed = false;
 
-    // 点赞
-    if (Math.random() < likeChance && (!m.likes || !m.likes.includes('partner'))) {
-        if (!m.likes) m.likes = [];
-        m.likes.push('partner');
-        changed = true;
-        console.log('📸 梦角点赞了');
-        showNotification(`${typeof settings !== 'undefined' ? settings.partnerName || '梦角' : '梦角'} 点赞了你`, 'info');
-    }
-
-    // 评论
-    if (Math.random() < commentChance) {
-        const pool = await getReplyPool();
-        if (pool.length) {
-            // 获取表情包库
-            const stickers = typeof myStickerLibrary !== 'undefined' && myStickerLibrary.length > 0 
-                ? myStickerLibrary 
-                : (typeof stickerLibrary !== 'undefined' && stickerLibrary.length > 0 
-                    ? stickerLibrary 
-                    : []);
-            
-            // 使用 1~4 张字卡组合
-            const count = 1 + Math.floor(Math.random() * Math.min(4, pool.length));
-            let text = '';
-            for (let i = 0; i < count; i++) {
-                text += pool[Math.floor(Math.random() * pool.length)] + ' ';
+    // ===== 每个互动者执行操作 =====
+    for (const reactor of reactors) {
+        const reactorName = reactor.name;
+        const isPartner = reactor.isPartner;
+        const authorKey = isPartner ? 'partner' : reactor.author;
+        
+        // 点赞
+        if (Math.random() < likeChance) {
+            if (!m.likes) m.likes = [];
+            if (!m.likes.includes(authorKey)) {
+                m.likes.push(authorKey);
+                changed = true;
+                console.log('📸', reactorName, '点赞了');
+                showNotification(`${reactorName} 点赞了你 ❤️`, 'info', 2000);
             }
-            text = text.trim();
-            
-            // 25% 概率附带表情包，10% 概率只有表情包
-            let sticker = null;
-            const stickerRand = Math.random();
-            if (stickerRand < 0.10 && stickers.length > 0) {
-                sticker = stickers[Math.floor(Math.random() * stickers.length)];
-                text = '';
-                console.log('📸 梦角自动评论：只有表情包');
-            } else if (stickerRand < 0.35 && stickers.length > 0) {
-                sticker = stickers[Math.floor(Math.random() * stickers.length)];
-                console.log('📸 梦角自动评论：文字 + 表情包');
-            }
-            
-            if (!m.comments) m.comments = [];
-            const hasComments = m.comments.length > 0;
-            if (hasComments && Math.random() < 0.2) {
-                const target = m.comments[Math.floor(Math.random() * m.comments.length)];
-                const targetInfo = getAuthorInfo(target.author);
-                const targetName = target.gcName || targetInfo.name || '成员';
-                m.comments.push({
-                    author: 'partner',
-                    text: text,
-                    sticker: sticker,
-                    replyToName: targetName,
-                    replyToAuthor: target.author,
-                    timestamp: Date.now(),
-                    gcName: typeof settings !== 'undefined' ? settings.partnerName || '梦角' : '梦角'
-                });
-                console.log('📸 梦角回复了评论');
-            } else {
-                m.comments.push({
-                    author: 'partner',
-                    text: text,
-                    sticker: sticker,
-                    timestamp: Date.now(),
-                    gcName: typeof settings !== 'undefined' ? settings.partnerName || '梦角' : '梦角'
-                });
-                console.log('📸 梦角独立评论了');
-            }
-            changed = true;
-            showNotification(`${typeof settings !== 'undefined' ? settings.partnerName || '梦角' : '梦角'} 评论了你`, 'info');
         }
-    }
+
+        // 评论
+        if (Math.random() < commentChance) {
+            const pool = await getReplyPool();
+            if (pool.length) {
+                const stickers = getStickerLibrary();
+                
+                const count = 1 + Math.floor(Math.random() * 3);
+                let text = '';
+                for (let i = 0; i < count; i++) {
+                    text += pool[Math.floor(Math.random() * pool.length)] + ' ';
+                }
+                text = text.trim();
+                
+                let sticker = null;
+                const stickerRand = Math.random();
+                if (stickerRand < 0.10 && stickers.length > 0) {
+                    sticker = stickers[Math.floor(Math.random() * stickers.length)];
+                    text = '';
+                    console.log('📸', reactorName, '只发了表情包');
+                } else if (stickerRand < 0.30 && stickers.length > 0) {
+                    sticker = stickers[Math.floor(Math.random() * stickers.length)];
+                    console.log('📸', reactorName, '发了文字 + 表情包');
+                }
+                
+                const hasComments = m.comments && m.comments.length > 0;
+                const commentData = {
+                    author: authorKey,
+                    text: text,
+                    sticker: sticker,
+                    timestamp: Date.now(),
+                    gcName: reactorName
+                };
+                
+                if (hasComments && Math.random() < 0.3) {
+                    const target = m.comments[Math.floor(Math.random() * m.comments.length)];
+                    const targetInfo = getAuthorInfo(target.author);
+                    commentData.replyToName = target.gcName || targetInfo.name || '成员';
+                    commentData.replyToAuthor = target.author;
+                    console.log('📸', reactorName, '回复了评论');
+                } else {
+                    console.log('📸', reactorName, '独立评论了');
+                }
+                
+                if (!m.comments) m.comments = [];
+                m.comments.push(commentData);
+                changed = true;
+                showNotification(`${reactorName} 评论了你 💬`, 'info', 2000);
+            }
+        }
+    }  // ← 🔥 for 循环在这里结束
+
+    // ===== 🔥 保存更改（移到 for 循环外面） =====
     if (changed) {
         await saveAll(all);
         render('moments-list', currentMode);
@@ -1119,7 +1360,7 @@ async function triggerReaction(momentId) {
         await saveAll(all);
         console.log('📸 本次未触发互动，已记录尝试次数');
     }
-}
+}  // ← 🔥 函数在这里结束
 
 
     function setMode(mode) {
@@ -1228,200 +1469,399 @@ function closeImageViewer() {
 // 暴露到全局
 window.openImageViewer = openImageViewer;
 window.closeImageViewer = closeImageViewer;
-    // ========== 暴露 API ==========
-    window.Moments = {
-        // 数据操作
-        getAll: getAll,
-        save: saveMoment,
-        update: updateMoment,
-        remove: removeMoment,
-        clearAll: clearAll,
-        saveAll: saveAll,
-        getByMode: getByMode,
+// ========== 暴露 API ==========
+window.Moments = {
+    getAll: getAll,
+    save: saveMoment,
+    update: updateMoment,
+    remove: removeMoment,
+    clearAll: clearAll,
+    saveAll: saveAll,
+    getByMode: getByMode,
+    render: render,
+    loadMore: loadMore,
+    resetLoadMore: resetLoadMore,
+    buildMomentCard: buildMomentCard,
+    publishMoment: publishMoment,
+    toggleLike: toggleLike,
+    sendComment: sendComment,
+    replyComment: replyComment,
+    deleteMoment: deleteMoment,
+    deleteComment: deleteComment,
+    focusComment: focusComment,
+    openCommentStickerPicker: openCommentStickerPicker,
+    insertCommentSticker: insertCommentSticker,
+    insertReplySticker: insertReplySticker,
+    selectReplySticker: selectReplySticker,
+    submitReply: submitReply,
+    scheduleAutoMoments: scheduleAutoMoments,
+    scheduleMomentReactions: scheduleMomentReactions,
+    generateAutoMoment: generateAutoMoment,
+    simulateReply: simulateReply,
+    triggerReaction: triggerReaction,
+    boostMoment: boostMoment,
+    isBoostActive: isBoostActive,
+    setMode: setMode,
+    getMode: getMode,
+    getTimeAgo: getTimeAgo,
+    getAuthorInfo: getAuthorInfo,
+    getReplyPool: getReplyPool,
+    showReplyInputWithSticker: noop,
+    cancelReplyInput: noop,
+    openReplyStickerPicker: noop,
+    sendCommentWithSticker: noop
+};
 
-        // UI 渲染
-        render: render,
-        loadMore: loadMore,
-        resetLoadMore: resetLoadMore,
-        buildMomentCard: buildMomentCard,
+// ===== 把导出导入函数单独挂载到 window.Moments 上 =====
+window.Moments.exportData = function() {
+    return new Promise(function(resolve, reject) {
+        window.Moments.getAll().then(function(data) {
+            if (!data || data.length === 0) {
+                if (typeof showNotification === 'function') {
+                    showNotification('没有朋友圈数据可导出', 'warning');
+                }
+                resolve();
+                return;
+            }
+            var avatars = {};
+            try {
+                if (window.momentAvatars) {
+                    avatars = window.momentAvatars;
+                } else {
+                    var stored = localStorage.getItem('momentAvatars');
+                    if (stored) avatars = JSON.parse(stored);
+                }
+            } catch (e) {
+                console.warn('读取头像数据失败:', e);
+            }
+            var withImage = 0;
+            data.forEach(function(m) {
+                if (m.media && typeof m.media === 'string' && m.media.length > 100) {
+                    withImage++;
+                }
+            });
+            var exportObj = {
+                version: '1.1',
+                exportType: 'moments',
+                exportDate: new Date().toISOString(),
+                totalCount: data.length,
+                withImage: withImage,
+                data: data,
+                avatars: avatars
+            };
+            var jsonStr = JSON.stringify(exportObj, null, 2);
+            var blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var link = document.createElement('a');
+            link.href = url;
+            link.download = '朋友圈备份_' + new Date().toISOString().slice(0, 10) + '.json';
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
+            var avatarCount = Object.keys(avatars).length;
+            if (typeof showNotification === 'function') {
+                showNotification('已导出 ' + data.length + ' 条朋友圈数据' + (avatarCount > 0 ? '，包含 ' + avatarCount + ' 个头像' : ''), 'success');
+            }
+            resolve(data.length);
+        }).catch(function(e) {
+            console.error('导出朋友圈失败:', e);
+            if (typeof showNotification === 'function') {
+                showNotification('导出失败', 'error');
+            }
+            reject(e);
+        });
+    });
+};
 
-        // 用户操作
-        publishMoment: publishMoment,
-        toggleLike: toggleLike,
-        sendComment: sendComment,
-        replyComment: replyComment,
-        deleteMoment: deleteMoment,
-        deleteComment: deleteComment,
-        focusComment: focusComment,
-
-        // 表情包
-        openCommentStickerPicker: openCommentStickerPicker,
-        insertCommentSticker: insertCommentSticker,
-        insertReplySticker: insertReplySticker,
-        selectReplySticker: selectReplySticker,
-        submitReply: submitReply,
-
-        // 梦角自动
-        scheduleAutoMoments: scheduleAutoMoments,
-        scheduleMomentReactions: scheduleMomentReactions,
-        generateAutoMoment: generateAutoMoment,
-        simulateReply: simulateReply,
-        triggerReaction: triggerReaction,
-
-        // 召唤
-        boostMoment: boostMoment,
-        isBoostActive: isBoostActive,
-
-        // 模式
-        setMode: setMode,
-        getMode: getMode,
-
-        // 工具
-        getTimeAgo: getTimeAgo,
-        getAuthorInfo: getAuthorInfo,
-        getReplyPool: getReplyPool,
-
-        // 占位
-        showReplyInputWithSticker: noop,
-        cancelReplyInput: noop,
-        openReplyStickerPicker: noop,
-        sendCommentWithSticker: noop,
-
-    // ===== 🔥 新增：独立导出导入 =====
-    exportData: async function() {
-    try {
-        const data = await this.getAll();
-        if (!data || data.length === 0) {
-            showNotification('⚠️ 没有朋友圈数据可导出', 'warning');
+window.Moments.importData = function(file) {
+    return new Promise(function(resolve, reject) {
+        if (!file) {
+            reject(new Error('没有选择文件'));
             return;
         }
-
-        // 🔥 获取头像数据
-        let avatars = {};
-        try {
-            if (window.momentAvatars) {
-                avatars = window.momentAvatars;
-            } else {
-                const stored = localStorage.getItem('momentAvatars');
-                if (stored) avatars = JSON.parse(stored);
-            }
-        } catch (e) {
-            console.warn('读取头像数据失败:', e);
-        }
-
-        let withImage = 0;
-        data.forEach(m => {
-            if (m.media && typeof m.media === 'string' && m.media.length > 100) {
-                withImage++;
-            }
-        });
-
-        const exportObj = {
-            version: '1.1',  // 🔥 升级版本号
-            exportType: 'moments',
-            exportDate: new Date().toISOString(),
-            totalCount: data.length,
-            withImage: withImage,
-            data: data,
-            avatars: avatars  // 🔥 新增：导出头像数据
-        };
-
-        const jsonStr = JSON.stringify(exportObj, null, 2);
-        const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `朋友圈备份_${new Date().toISOString().slice(0, 10)}.json`;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-
-        const avatarCount = Object.keys(avatars).length;
-        showNotification(`✅ 已导出 ${data.length} 条朋友圈数据${avatarCount > 0 ? `，包含 ${avatarCount} 个头像` : ''}`, 'success');
-    } catch (e) {
-        console.error('导出朋友圈失败:', e);
-        showNotification('❌ 导出失败', 'error');
-    }
-},
-importData: function(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async function(e) {
+        var reader = new FileReader();
+        reader.onload = function(e) {
             try {
-                let rawText = e.target.result;
+                var rawText = e.target.result;
                 if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
-                const imported = JSON.parse(rawText);
-
+                var imported = JSON.parse(rawText);
                 if (imported.exportType !== 'moments') {
-                    showNotification('❌ 不是有效的朋友圈备份文件', 'error');
+                    if (typeof showNotification === 'function') {
+                        showNotification('不是有效的朋友圈备份文件', 'error');
+                    }
                     reject(new Error('Invalid format'));
                     return;
                 }
-
                 if (!imported.data || !Array.isArray(imported.data) || imported.data.length === 0) {
-                    showNotification('⚠️ 文件中没有朋友圈数据', 'warning');
+                    if (typeof showNotification === 'function') {
+                        showNotification('文件中没有朋友圈数据', 'warning');
+                    }
                     reject(new Error('No data'));
                     return;
                 }
-
-                let withImage = 0;
-                imported.data.forEach(m => {
+                var withImage = 0;
+                imported.data.forEach(function(m) {
                     if (m.media && typeof m.media === 'string' && m.media.length > 100) {
                         withImage++;
                     }
                 });
-
-                // 🔥 检查是否有头像数据
-                const hasAvatars = imported.avatars && Object.keys(imported.avatars).length > 0;
-                let avatarCount = hasAvatars ? Object.keys(imported.avatars).length : 0;
-
-                const confirmMsg = `即将导入 ${imported.data.length} 条朋友圈数据\n其中包含图片 ${withImage} 条${hasAvatars ? `\n包含 ${avatarCount} 个头像` : ''}\n\n⚠️ 将覆盖当前所有朋友圈数据，确定继续吗？`;
+                var hasAvatars = imported.avatars && Object.keys(imported.avatars).length > 0;
+                var avatarCount = hasAvatars ? Object.keys(imported.avatars).length : 0;
+                var confirmMsg = '即将导入 ' + imported.data.length + ' 条朋友圈数据\n其中包含图片 ' + withImage + ' 条' + (hasAvatars ? '\n包含 ' + avatarCount + ' 个头像' : '') + '\n\n将覆盖当前所有朋友圈数据，确定继续吗？';
                 if (!confirm(confirmMsg)) {
                     resolve(false);
                     return;
                 }
-
-                // 确保每条数据的 media 都是字符串
-                imported.data.forEach(m => {
+                imported.data.forEach(function(m) {
                     if (m.media && typeof m.media !== 'string') {
                         m.media = String(m.media);
                     }
                 });
-
-                // 🔥 保存朋友圈数据
-                await window.Moments.saveAll(imported.data);
-
-                // 🔥 保存头像数据
-                if (hasAvatars) {
-                    try {
-                        window.momentAvatars = imported.avatars;
-                        localStorage.setItem('momentAvatars', JSON.stringify(imported.avatars));
-                        console.log('✅ 已导入头像数据:', avatarCount, '个');
-                    } catch (e) {
-                        console.warn('保存头像数据失败:', e);
+                window.Moments.saveAll(imported.data).then(function() {
+                    if (hasAvatars) {
+                        try {
+                            window.momentAvatars = imported.avatars;
+                            localStorage.setItem('momentAvatars', JSON.stringify(imported.avatars));
+                            console.log('已导入头像数据:', avatarCount, '个');
+                        } catch (e) {
+                            console.warn('保存头像数据失败:', e);
+                        }
                     }
-                }
-
-                console.log('✅ 已导入', imported.data.length, '条朋友圈数据');
-                window.Moments.render('moments-list', 'partner');
-                showNotification(`✅ 成功导入 ${imported.data.length} 条朋友圈数据${hasAvatars ? `，包含 ${avatarCount} 个头像` : ''}`, 'success');
-                resolve(true);
-
+                    console.log('已导入', imported.data.length, '条朋友圈数据');
+                    window.Moments.render('moments-list', 'partner');
+                    if (typeof showNotification === 'function') {
+                        showNotification('成功导入 ' + imported.data.length + ' 条朋友圈数据' + (hasAvatars ? '，包含 ' + avatarCount + ' 个头像' : ''), 'success');
+                    }
+                    resolve(true);
+                }).catch(function(err) {
+                    console.error('保存朋友圈数据失败:', err);
+                    if (typeof showNotification === 'function') {
+                        showNotification('导入失败', 'error');
+                    }
+                    reject(err);
+                });
             } catch (e) {
                 console.error('导入朋友圈失败:', e);
-                showNotification('❌ 导入失败，文件格式错误', 'error');
+                if (typeof showNotification === 'function') {
+                    showNotification('导入失败，文件格式错误', 'error');
+                }
                 reject(e);
             }
         };
         reader.onerror = function(e) {
-            showNotification('❌ 读取文件失败', 'error');
+            if (typeof showNotification === 'function') {
+                showNotification('读取文件失败', 'error');
+            }
             reject(e);
         };
         reader.readAsText(file);
     });
-  }
+};
+
+window.Moments.forceGroupMemberMoment = function(memberName) {
+    return new Promise(function(resolve) {
+        try {
+            if (!window.groupChatData || !window.groupChatData.enabled) {
+                if (typeof showNotification === 'function') {
+                    showNotification('请先开启群聊模式', 'warning');
+                }
+                resolve(false);
+                return;
+            }
+            var members = window.groupChatData.members || [];
+            if (members.length === 0) {
+                if (typeof showNotification === 'function') {
+                    showNotification('请先添加群成员', 'warning');
+                }
+                resolve(false);
+                return;
+            }
+            var targetMember = null;
+            if (memberName) {
+                targetMember = members.find(function(m) { return m.name === memberName; });
+                if (!targetMember) {
+                    if (typeof showNotification === 'function') {
+                        showNotification('找不到成员「' + memberName + '」', 'warning');
+                    }
+                    resolve(false);
+                    return;
+                }
+            } else {
+                targetMember = members[Math.floor(Math.random() * members.length)];
+            }
+            var member = targetMember;
+            var memberName = member.name || '群成员';
+            if (typeof showNotification === 'function') {
+                showNotification(memberName + ' 发圈中...', 'info', 1500);
+            }
+            getReplyPool().then(function(pool) {
+                if (!pool.length) {
+                    if (typeof showNotification === 'function') {
+                        showNotification('回复池为空', 'warning');
+                    }
+                    resolve(false);
+                    return;
+                }
+                var count = 3 + Math.floor(Math.random() * Math.min(4, pool.length));
+                var text = '';
+                for (var i = 0; i < count; i++) {
+                    text += pool[Math.floor(Math.random() * pool.length)] + ' ';
+                }
+                text = text.trim();
+                var emojis = ['💕', '🥺', '✨', '🌙', '❤️', '😘', '🤍', '🌸', '🫶', '☁️'];
+                if (Math.random() < 0.3) {
+                    text += ' ' + emojis[Math.floor(Math.random() * emojis.length)];
+                }
+                var media = null;
+                if (Math.random() < 0.15) {
+                    var stickers = getStickerLibrary();
+                    if (stickers && stickers.length > 0) {
+                        media = stickers[Math.floor(Math.random() * stickers.length)];
+                    }
+                }
+                var data = {
+                    author: 'gc_' + memberName,
+                    text: text,
+                    media: media,
+                    scene: 'group',
+                    timestamp: Date.now(),
+                    likes: [],
+                    comments: [],
+                    reactAttempts: 0,
+                    gcName: memberName,
+                    gcAvatar: member.avatar || null
+                };
+                window.Moments.save(data).then(function(id) {
+                    console.log('群成员', memberName, '发布了朋友圈');
+                    if (currentMode === 'group') {
+                        window.Moments.render('moments-list', 'group');
+                    }
+                    scheduleMomentReactions(id);
+                    if (typeof showNotification === 'function') {
+                        showNotification(memberName + ' 已发圈', 'success');
+                    }
+                    resolve(true);
+                }).catch(function(err) {
+                    console.error('强制发圈失败:', err);
+                    if (typeof showNotification === 'function') {
+                        showNotification('发圈失败', 'error');
+                    }
+                    resolve(false);
+                });
+            }).catch(function() {
+                if (typeof showNotification === 'function') {
+                    showNotification('获取回复池失败', 'error');
+                }
+                resolve(false);
+            });
+        } catch (err) {
+            console.error('强制发圈失败:', err);
+            if (typeof showNotification === 'function') {
+                showNotification('发圈失败', 'error');
+            }
+            resolve(false);
+        }
+    });
+};
+
+window.Moments.forceAllGroupMembersMoment = function() {
+    return new Promise(function(resolve) {
+        try {
+            if (!window.groupChatData || !window.groupChatData.enabled) {
+                if (typeof showNotification === 'function') {
+                    showNotification('请先开启群聊模式', 'warning');
+                }
+                resolve(false);
+                return;
+            }
+            var members = window.groupChatData.members || [];
+            if (members.length === 0) {
+                if (typeof showNotification === 'function') {
+                    showNotification('请先添加群成员', 'warning');
+                }
+                resolve(false);
+                return;
+            }
+            if (typeof showNotification === 'function') {
+                showNotification('正在让所有群成员发圈...', 'info', 2000);
+            }
+            var successCount = 0;
+            var totalMembers = members.length;
+            var completed = 0;
+            var processNextMember = function() {
+                if (completed >= totalMembers) {
+                    if (currentMode === 'group') {
+                        window.Moments.render('moments-list', 'group');
+                    }
+                    if (typeof showNotification === 'function') {
+                        showNotification(successCount + ' 个群成员已发圈', 'success');
+                    }
+                    resolve(true);
+                    return;
+                }
+                var member = members[completed];
+                var memberName = member.name || '群成员';
+                getReplyPool().then(function(pool) {
+                    if (!pool.length) {
+                        completed++;
+                        processNextMember();
+                        return;
+                    }
+                    var count = 2 + Math.floor(Math.random() * Math.min(3, pool.length));
+                    var text = '';
+                    for (var j = 0; j < count; j++) {
+                        text += pool[Math.floor(Math.random() * pool.length)] + ' ';
+                    }
+                    text = text.trim();
+                    var emojis = ['💕', '🥺', '✨', '🌙', '❤️', '😘', '🤍', '🌸', '🫶', '☁️'];
+                    if (Math.random() < 0.3) {
+                        text += ' ' + emojis[Math.floor(Math.random() * emojis.length)];
+                    }
+                    var media = null;
+                    if (Math.random() < 0.15) {
+                        var stickers = getStickerLibrary();
+                        if (stickers && stickers.length > 0) {
+                            media = stickers[Math.floor(Math.random() * stickers.length)];
+                        }
+                    }
+                    var data = {
+                        author: 'gc_' + memberName,
+                        text: text,
+                        media: media,
+                        scene: 'group',
+                        timestamp: Date.now(),
+                        likes: [],
+                        comments: [],
+                        reactAttempts: 0,
+                        gcName: memberName,
+                        gcAvatar: member.avatar || null
+                    };
+                    window.Moments.save(data).then(function() {
+                        successCount++;
+                        console.log(memberName + ' 发圈成功');
+                        completed++;
+                        setTimeout(processNextMember, 300);
+                    }).catch(function(err) {
+                        console.error(memberName + ' 发圈失败:', err);
+                        completed++;
+                        setTimeout(processNextMember, 300);
+                    });
+                }).catch(function() {
+                    completed++;
+                    setTimeout(processNextMember, 300);
+                });
+            };
+            processNextMember();
+        } catch (err) {
+            console.error('全员发圈失败:', err);
+            if (typeof showNotification === 'function') {
+                showNotification('发圈失败', 'error');
+            }
+            resolve(false);
+        }
+    });
 };
 
 // 自动渲染
@@ -1429,17 +1869,17 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     setTimeout(function() {
         render('moments-list', currentMode);
         scheduleAutoMoments();
-        console.log('✅ 朋友圈初始化完成');
+        console.log('朋友圈初始化完成');
     }, 100);
 } else {
     document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
             render('moments-list', currentMode);
             scheduleAutoMoments();
-            console.log('✅ 朋友圈初始化完成');
+            console.log('朋友圈初始化完成');
         }, 100);
     });
 }
 
-console.log('✅ Moments 加载完成');
+console.log('Moments 加载完成');
 })();
