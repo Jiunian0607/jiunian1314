@@ -677,12 +677,25 @@ const saveData = async () => {
         return;
     }
 
+    // ===== 🔥 新增：限制消息数量 =====
+    const MAX_MESSAGES = 300;  // 最多保留300条
+    let messagesToSave = messages;
+    
+    if (messages.length > MAX_MESSAGES) {
+        messagesToSave = messages.slice(-MAX_MESSAGES);
+        console.warn(`⚠️ 消息超过 ${MAX_MESSAGES} 条，已自动清理旧消息，保留最新 ${MAX_MESSAGES} 条`);
+        messages = messagesToSave;
+        if (typeof showNotification === 'function') {
+            showNotification(`📊 已自动清理旧消息，保留最新 ${MAX_MESSAGES} 条`, 'info', 3000);
+        }
+    }
+
     // ===== 分离保存：每个数据独立存储 =====
     const savePromises = [];
 
     // 核心数据
     savePromises.push(safeStore(getStorageKey('chatSettings'), settings));
-    savePromises.push(safeStore(getStorageKey('chatMessages'), messages));
+    savePromises.push(safeStore(getStorageKey('chatMessages'), messagesToSave));
 
     // 回复库
     savePromises.push(safeStore(getStorageKey('customReplies'), customReplies));
@@ -773,6 +786,19 @@ const saveData = async () => {
     // 返回保存结果
     return results;
 };
+
+// ===== 🔥 新增：防抖保存函数 =====
+var _saveTimer_core = null;
+function throttledSaveData_core() {
+    if (_saveTimer_core) clearTimeout(_saveTimer_core);
+    _saveTimer_core = setTimeout(function() {
+        saveData();
+        _saveTimer_core = null;
+    }, 1000);
+}
+window.throttledSaveData = throttledSaveData_core;
+// 同时保留旧名称兼容
+window.throttledSaveData = throttledSaveData_core;
 
 function initializeRandomUI() {
 
@@ -2683,15 +2709,32 @@ document.addEventListener('DOMContentLoaded', function() {
         observer.observe(historyLoader);
     }
 });
-// 存储监控 - 定期检查
+// ===== 🔥 新增：存储监控 =====
 setInterval(async () => {
     try {
-        const usage = await checkStorageUsage();
-        const totalMB = parseFloat(usage.total);
-        if (totalMB > 4) {
-            console.warn('⚠️ 存储使用超过 4MB，建议清理');
+        const moments = await window.Moments.getAll();
+        let totalImageSize = 0;
+        let imageCount = 0;
+        moments.forEach(m => {
+            if (m.media && typeof m.media === 'string') {
+                totalImageSize += m.media.length;
+                imageCount++;
+            }
+        });
+        
+        // 如果图片超过 5MB，警告
+        if (totalImageSize > 5 * 1024 * 1024) {
+            console.warn(`⚠️ 朋友圈图片占用 ${(totalImageSize/1024/1024).toFixed(2)}MB (${imageCount}张)，建议清理`);
+            if (typeof showNotification === 'function') {
+                showNotification('📸 朋友圈图片较多，建议导出备份后清理', 'warning', 4000);
+            }
         }
-    } catch (e) {
+        
+        // 检查消息数量
+        if (messages.length > 350) {
+            console.warn(`⚠️ 消息数量 ${messages.length} 条，接近限制`);
+        }
+    } catch(e) {
         // 静默失败
     }
-}, 5 * 60 * 1000); // 每5分钟检查一次
+}, 60 * 1000); // 每60秒检查一次

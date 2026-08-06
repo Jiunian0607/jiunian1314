@@ -7,6 +7,38 @@
  // 定义 boostExpiry（用于召唤功能）
     var boostExpiry = { moment: 0, like: 0, comment: 0 };
 
+// ========== 动态概率系统 ==========
+var dynamicChances = {
+    // 基础概率（会随机波动）
+    baseLikeChance: 0.08,      // 基础点赞概率 8%
+    baseCommentChance: 0.08,   // 基础评论概率 8%
+    basePostChance: 0.20,      // 群成员基础发圈概率 20%
+    partnerBasePostChance: 0.50, // 🔥 新增：梦角每次检查时发圈的概率 50%
+    
+    // 当前实际概率（动态变化）
+    currentLikeChance: 0.08,
+    currentCommentChance: 0.08,
+    currentPostChance: 0.20,
+    currentPartnerPostChance: 0.50, // 🔥 新增：梦角当前发圈概率
+    
+    // 波动范围
+    minLikeChance: 0.03,
+    maxLikeChance: 0.25,
+    minCommentChance: 0.03,
+    maxCommentChance: 0.25,
+    minPostChance: 0.10,
+    maxPostChance: 0.45,
+    minPartnerPostChance: 0.25,  // 🔥 新增：梦角最低发圈概率 25%
+    maxPartnerPostChance: 0.80,  // 🔥 新增：梦角最高发圈概率 80%
+    
+    // 波动周期（毫秒）
+    fluctuationInterval: 180000,
+    
+    // 上次更新时间
+    lastUpdate: Date.now()
+};
+window.dynamicChances = dynamicChances;
+
 // ========== 模式 ==========
     var currentMode = window.momentsMode || 'partner';  // 🔥 移到顶部
     var loadMoreOffset = 20;
@@ -498,44 +530,51 @@ function updateTabHighlight(mode) {
         });
     }
 
-    // ========== 图片处理 ==========
-    function processImage(file) {
-        return new Promise(function(resolve, reject) {
-            var reader = new FileReader();
-            reader.onload = function(e) {
-                var base64 = e.target.result;
-                if (base64.length < 1.5 * 1024 * 1024) {
-                    resolve(base64);
-                    return;
-                }
-                var img = new Image();
-                img.onload = function() {
-                    try {
-                        var maxWidth = 600;
-                        var width = img.width;
-                        var height = img.height;
-                        if (width > maxWidth) {
-                            height = Math.round((height * maxWidth) / width);
-                            width = maxWidth;
-                        }
-                        var canvas = document.createElement('canvas');
-                        canvas.width = width;
-                        canvas.height = height;
-                        var ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, width, height);
-                        var compressed = canvas.toDataURL('image/jpeg', 0.6);
-                        resolve(compressed);
-                    } catch (err) {
-                        resolve(base64);
-                    }
-                };
-                img.onerror = function() { resolve(base64); };
-                img.src = base64;
-            };
-            reader.onerror = function(e) { reject(e); };
+// ========== 图片处理（压缩优化） ==========
+function processImage(file) {
+    return new Promise(function(resolve, reject) {
+        // 🔥 如果图片小于 200KB，直接返回（保留原图）
+        if (file.size < 200 * 1024) {
+            const reader = new FileReader();
+            reader.onload = function(e) { resolve(e.target.result); };
+            reader.onerror = reject;
             reader.readAsDataURL(file);
-        });
-    }
+            return;
+        }
+        
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            var base64 = e.target.result;
+            var img = new Image();
+            img.onload = function() {
+                try {
+                    // 🔥 调整：最大宽度 600px（原来 300px）
+                    var maxWidth = 600;
+                    var width = img.width;
+                    var height = img.height;
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                    var canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    var ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    // 🔥 调整：质量提升到 0.7（原来 0.4）
+                    var compressed = canvas.toDataURL('image/jpeg', 0.7);
+                    resolve(compressed);
+                } catch (err) {
+                    resolve(base64);
+                }
+            };
+            img.onerror = function() { resolve(base64); };
+            img.src = base64;
+        };
+        reader.onerror = function(e) { reject(e); };
+        reader.readAsDataURL(file);
+    });
+}
 
    // ========== 发布 ==========
 async function publishMoment(text, media) {
@@ -1025,6 +1064,67 @@ async function simulateReply(id) {
         }
     }
 
+// ========== 🔥 新增：动态概率更新函数 ==========
+function updateDynamicChances() {
+    var now = Date.now();
+    var elapsed = now - dynamicChances.lastUpdate;
+    if (elapsed < dynamicChances.fluctuationInterval) return;
+    
+    var likeDelta = (Math.random() - 0.5) * 0.06;
+    var commentDelta = (Math.random() - 0.5) * 0.06;
+    var postDelta = (Math.random() - 0.5) * 0.08;
+    var partnerPostDelta = (Math.random() - 0.5) * 0.12; 
+    
+    var newLike = Math.min(dynamicChances.maxLikeChance, Math.max(dynamicChances.minLikeChance, dynamicChances.baseLikeChance + likeDelta));
+    var newComment = Math.min(dynamicChances.maxCommentChance, Math.max(dynamicChances.minCommentChance, dynamicChances.baseCommentChance + commentDelta));
+    var newPost = Math.min(dynamicChances.maxPostChance, Math.max(dynamicChances.minPostChance, dynamicChances.basePostChance + postDelta));
+    
+    dynamicChances.currentLikeChance = newLike;
+    dynamicChances.currentCommentChance = newComment;
+    dynamicChances.currentPostChance = newPost;
+    dynamicChances.lastUpdate = now;
+    
+    console.log('📊 动态概率更新:');
+    console.log(`  点赞: ${(newLike * 100).toFixed(1)}% (基础 ${(dynamicChances.baseLikeChance * 100).toFixed(1)}%)`);
+    console.log(`  评论: ${(newComment * 100).toFixed(1)}% (基础 ${(dynamicChances.baseCommentChance * 100).toFixed(1)}%)`);
+    console.log(`  发圈: ${(newPost * 100).toFixed(1)}% (基础 ${(dynamicChances.basePostChance * 100).toFixed(1)}%)`);
+    
+    try { localStorage.setItem('dynamicChances', JSON.stringify(dynamicChances)); } catch(e) {}
+}
+
+function loadDynamicChances() {
+    try {
+        var saved = localStorage.getItem('dynamicChances');
+        if (saved) {
+            var parsed = JSON.parse(saved);
+            dynamicChances.currentLikeChance = parsed.currentLikeChance || dynamicChances.baseLikeChance;
+            dynamicChances.currentCommentChance = parsed.currentCommentChance || dynamicChances.baseCommentChance;
+            dynamicChances.currentPostChance = parsed.currentPostChance || dynamicChances.basePostChance;
+            dynamicChances.currentPartnerPostChance = parsed.currentPartnerPostChance || dynamicChances.partnerBasePostChance;
+            dynamicChances.lastUpdate = parsed.lastUpdate || Date.now();
+            console.log('📊 已恢复动态概率状态');
+        }
+    } catch(e) {}
+}
+
+// 暴露调试函数
+window.forceUpdateChances = function() { dynamicChances.lastUpdate = 0; updateDynamicChances(); };
+window.showChances = function() {
+    console.log('📊 当前概率:');
+    console.log(`  点赞: ${(dynamicChances.currentLikeChance * 100).toFixed(1)}%`);
+    console.log(`  评论: ${(dynamicChances.currentCommentChance * 100).toFixed(1)}%`);
+    console.log(`  发圈: ${(dynamicChances.currentPostChance * 100).toFixed(1)}%`);
+};
+window.resetChances = function() {
+    dynamicChances.currentLikeChance = dynamicChances.baseLikeChance;
+    dynamicChances.currentCommentChance = dynamicChances.baseCommentChance;
+    dynamicChances.currentPostChance = dynamicChances.basePostChance;
+    dynamicChances.lastUpdate = Date.now();
+    localStorage.setItem('dynamicChances', JSON.stringify(dynamicChances));
+    console.log('✅ 概率已重置');
+    window.showChances();
+};
+
    // ========== 自动引擎 ==========
 let autoTimers = [];
 
@@ -1033,33 +1133,103 @@ function scheduleAutoMoments() {
     autoTimers.forEach(t => clearTimeout(t));
     autoTimers = [];
 
+    // 🔥 定期更新动态概率（每 3 分钟）
+    const chanceTimer = setInterval(function() {
+        updateDynamicChances();
+    }, dynamicChances.fluctuationInterval);
+    autoTimers.push(chanceTimer);
+
+    // 🔥 只有群聊模式才调度群成员发圈
+    if (currentMode === 'group' && window.groupChatData && window.groupChatData.enabled) {
+        // 🔥 检查召唤加成
+        const boostActive = isBoostActive('moment');
+        
+        // 每天随机发 0~3 条（召唤时增加发圈概率）
+        let dayCount = Math.floor(Math.random() * 4);
+        if (boostActive) {
+            dayCount = Math.min(dayCount + 2, 5);
+            console.log('📸 召唤加成生效，群成员将多发朋友圈');
+        }
+        
+        const interval = 2 * 60 * 60 * 1000;
+
+        for (let i = 0; i < dayCount; i++) {
+            const delay = interval + Math.random() * 4 * 60 * 60 * 1000;
+            const timer = setTimeout(() => {
+                generateGroupMemberMoment();
+            }, delay);
+            autoTimers.push(timer);
+        }
+        console.log(`📸 群成员自动朋友圈已调度，今天将发 ${dayCount} 条`);
+    } else {
+        // 🔥 伴侣模式：不调度群成员发圈
+        console.log('📸 当前为伴侣模式，群成员不发圈');
+    }
+}
+
+// ===== 🔥 新增：调度梦角发圈 =====
+function schedulePartnerMoments() {
+    // 清除旧的梦角发圈定时器
+    if (window._partnerMomentTimers) {
+        window._partnerMomentTimers.forEach(t => clearInterval(t));
+    }
+    window._partnerMomentTimers = [];
+    
     // 🔥 检查召唤加成
     const boostActive = isBoostActive('moment');
     
-    // 每天随机发 0~3 条（召唤时增加发圈概率）
-    let dayCount = Math.floor(Math.random() * 4);
+    // 🔥 每日固定 3 条 + 额外 0-2 条（召唤时额外 1-2 条）
+    let baseCount = 3;  // 固定 3 条
+    let extraCount = Math.floor(Math.random() * 3);  // 0-2 条额外
+    
     if (boostActive) {
-        dayCount = Math.min(dayCount + 2, 5);
-        console.log('📸 召唤加成生效，今天将多发朋友圈');
+        extraCount = Math.min(extraCount + 2, 4);  // 召唤时额外增加
+        console.log('📸 召唤加成生效，梦角将多发朋友圈');
     }
     
-    const interval = 2 * 60 * 60 * 1000;
-
-    for (let i = 0; i < dayCount; i++) {
-        const delay = interval + Math.random() * 4 * 60 * 60 * 1000;
-        const timer = setTimeout(() => {
-            // ===== 🔥 新增：根据模式选择发圈类型 =====
-            if (currentMode === 'group' && window.groupChatData && window.groupChatData.enabled) {
-                // 群组模式：群成员发圈
-                generateGroupMemberMoment();
-            } else {
-                // 伴侣模式：梦角发圈
-                generateAutoMoment();
-            }
-        }, delay);
-        autoTimers.push(timer);
+    const totalCount = baseCount + extraCount;
+    console.log(`📸 梦角今日计划发圈: ${totalCount} 条 (固定 ${baseCount} 条 + 额外 ${extraCount} 条)`);
+    
+    // 每小时检查一次
+    const checkInterval = 60 * 60 * 1000;
+    let checksPerformed = 0;
+    const maxChecks = 24;
+    let postedCount = 0;
+    
+    // 立即执行一次检查
+    tryPartnerMoment();
+    
+    // 设置定时检查
+    const timer = setInterval(function() {
+        checksPerformed++;
+        if (checksPerformed >= maxChecks || postedCount >= totalCount) {
+            clearInterval(timer);
+            console.log(`📸 梦角发圈计划完成，共发布 ${postedCount} 条`);
+            return;
+        }
+        tryPartnerMoment();
+    }, checkInterval);
+    
+    window._partnerMomentTimers.push(timer);
+    
+    function tryPartnerMoment() {
+        if (postedCount >= totalCount) return;
+        
+        // 更新动态概率
+        updateDynamicChances();
+        
+        // 检查发圈概率
+        const boostActive = isBoostActive('moment');
+        const postChance = boostActive ? 0.75 : dynamicChances.currentPartnerPostChance;
+        
+        if (Math.random() < postChance) {
+            generateAutoMoment();
+            postedCount++;
+            console.log(`📸 梦角发圈成功 (${postedCount}/${totalCount})，概率: ${Math.round(postChance * 100)}%${boostActive ? ' 召唤加成' : ''}`);
+        } else {
+            console.log(`📸 梦角本次未发圈，概率: ${Math.round(postChance * 100)}%`);
+        }
     }
-    console.log(`📸 自动朋友圈已调度，今天将发 ${dayCount} 条`);
 }
 
     async function generateAutoMoment() {
@@ -1120,15 +1290,17 @@ async function generateGroupMemberMoment() {
         return;
     }
     
-    // 🔥 新增：检查召唤加成（发圈概率提升）
+    // 🔥 修改这里：使用动态概率
+    updateDynamicChances();
+    
     const boostActive = isBoostActive('moment');
-    // 群成员发圈基础概率 20%，召唤后提升到 55%
-    const postChance = boostActive ? 0.55 : 0.20;
+    const postChance = boostActive ? 0.55 : dynamicChances.currentPostChance;
+    
     if (Math.random() > postChance) {
-        console.log('📸 群成员发圈未触发（概率:', Math.round(postChance * 100) + '%', boostActive ? '召唤加成激活' : '');
+        console.log(`📸 群成员发圈未触发（概率: ${Math.round(postChance * 100)}%）`);
         return;
     }
-    console.log('📸 群成员发圈触发（概率:', Math.round(postChance * 100) + '%', boostActive ? '召唤加成激活' : '');
+    console.log(`📸 群成员发圈触发（概率: ${Math.round(postChance * 100)}%）`);
     
     // 随机选择一个群成员
     var member = members[Math.floor(Math.random() * members.length)];
@@ -1220,9 +1392,11 @@ async function triggerReaction(momentId) {
     const boostLikeActive = isBoostActive('like');
     const boostCommentActive = isBoostActive('comment');
     
-    // 🔥 基础概率 + 召唤加成
-    let likeChance = 0.08;
-    let commentChance = 0.08;
+    // 🔥 修改这里：使用动态概率
+    updateDynamicChances();
+    
+    let likeChance = dynamicChances.currentLikeChance;
+    let commentChance = dynamicChances.currentCommentChance;
     
     if (boostLikeActive) likeChance = 0.35;
     if (boostCommentActive) commentChance = 0.35;
@@ -1863,6 +2037,16 @@ window.Moments.forceAllGroupMembersMoment = function() {
         }
     });
 };
+
+// ===== 🔥 新增：恢复动态概率 =====
+loadDynamicChances();
+console.log('📊 动态概率已加载');
+
+// ===== 🔥 启动梦角发圈调度 =====
+setTimeout(function() {
+    schedulePartnerMoments();
+    console.log('📸 梦角发圈调度已启动');
+}, 5000);
 
 // 自动渲染
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
