@@ -461,6 +461,12 @@ async function importAllData(file) {
                 localStorageNeedles: []
             },
             {
+                id: 'survey',
+                label: '心意问卷（历史答题）',
+                indexedDBNeedles: ['surveyRecords'],
+                localStorageNeedles: []
+            },
+            {
                 id: 'themes',
                 label: '主题 / 外观 / 图库',
                 indexedDBNeedles: ['customThemes', 'themeSchemes', 'backgroundGallery', 'chatBackground', 'partnerAvatar', 'myAvatar', 'partnerPersonas'],

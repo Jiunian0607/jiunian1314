@@ -130,6 +130,12 @@ function _renderListContentOnly() {
     const list = document.getElementById('custom-replies-list');
     if (!list) return;
 
+    // 情绪字卡走独立渲染器
+    if (currentMajorTab === 'reply' && currentSubTab === 'emotion') {
+        if (typeof window._renderEmotionCardsTab === 'function') window._renderEmotionCardsTab(list);
+        return;
+    }
+
     const toolbar = document.getElementById('batch-ops-toolbar');
     Array.from(list.children).forEach(child => {
         if (child !== toolbar) child.remove();
@@ -223,6 +229,12 @@ function renderReplyLibrary() {
 
     _renderModernToolbar();
 
+    // 情绪字卡走独立渲染器
+    if (currentMajorTab === 'reply' && currentSubTab === 'emotion') {
+        if (typeof window._renderEmotionCardsTab === 'function') window._renderEmotionCardsTab(list);
+        return;
+    }
+
     let itemsToRender = [];
     let renderType = 'text';
 
@@ -263,6 +275,11 @@ function renderReplyLibrary() {
 
 function _renderModernToolbar() {
     let toolbar = document.getElementById('batch-ops-toolbar');
+    // 情绪字卡页使用专属面板，隐藏通用工具栏
+    if (currentMajorTab === 'reply' && currentSubTab === 'emotion') {
+        if (toolbar) toolbar.style.display = 'none';
+        return;
+    }
     const isMainCustom = currentMajorTab === 'reply' && currentSubTab === 'custom';
     const isStickersTab = currentMajorTab === 'reply' && currentSubTab === 'stickers';
     const hasGroupSupport = _tabHasGroups();
@@ -2286,6 +2303,10 @@ function initReplyLibraryListeners() {
     const addBtn = document.getElementById('add-custom-reply');
     if (addBtn) {
         addBtn.addEventListener('click', () => {
+            if (currentSubTab === 'emotion') {
+                if (typeof window._emotionCardsQuickAdd === 'function') window._emotionCardsQuickAdd();
+                return;
+            }
             if (currentSubTab === 'stickers') {
                 document.getElementById('sticker-file-input')?.click(); return;
             }

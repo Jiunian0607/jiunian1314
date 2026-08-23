@@ -354,6 +354,7 @@ const loadData = async () => {
             savedReverseQuestions,
             savedBgGalleryFallback,
             savedEmojis,
+            savedEmotionCards,
         ] = await Promise.all([
             safeLoad(getStorageKey('chatSettings'), null),
             safeLoad(getStorageKey('chatMessages'), null),
@@ -380,6 +381,7 @@ const loadData = async () => {
             // 兼容旧版背景图库
             safeLoad(getStorageKey('backgroundGallery'), null),
             safeLoad(getStorageKey('customEmojis'), null),
+            safeLoad(getStorageKey('emotionCards'), null),
         ]);
 
         // 应用设置
@@ -456,8 +458,11 @@ if (savedIntros && savedIntros.length > 0) {
     console.log('✅ 加载 customIntros:', customIntros.length, '条');
 }
 if (savedEmojis && savedEmojis.length > 0) {
-    customEmojis = savedEmojis;
-    console.log('✅ 加载 customEmojis:', customEmojis.length, '条');
+    customEmojis = savedEmojis;    console.log('✅ 加载 customEmojis:', customEmojis.length, '条');
+}
+if (savedEmotionCards && typeof savedEmotionCards === 'object') {
+    window.emotionCardsData = savedEmotionCards;
+    console.log('✅ 加载 情绪字卡 配置');
 }
 
         // 显示名字配置
@@ -561,6 +566,7 @@ const LIBRARY_CONFIG = {
         title: "回复库管理",
         tabs: [
             { id: 'custom', name: '主字卡', mode: 'list' },
+            { id: 'emotion', name: '情绪字卡', mode: 'list' },
             { id: 'emojis', name: 'Emoji', mode: 'grid' },
             { id: 'stickers', name: '表情库', mode: 'grid' }
         ]
@@ -713,6 +719,9 @@ const saveData = async () => {
     savePromises.push(safeStore(getStorageKey('customEmojis'), customEmojis));
     savePromises.push(safeStore(getStorageKey('stickerLibrary'), stickerLibrary));
     savePromises.push(safeStore(getStorageKey('myStickerLibrary'), myStickerLibrary));
+
+    // 情绪字卡
+    savePromises.push(safeStore(getStorageKey('emotionCards'), window.emotionCardsData || null));
 
     // 纪念日
     savePromises.push(safeStore(getStorageKey('anniversaries'), anniversaries));
@@ -1242,6 +1251,38 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
     }
     messageDiv.innerHTML = messageHTML;
 
+    // ── 情绪字卡：气泡下方附带的独立小卡片（💭情绪 / ❤️心意 / 💬意图 三系）──
+    let emotionPillEl = null;
+    const emotionCards = (Array.isArray(msg.emotionCards) && msg.emotionCards.length)
+        ? msg.emotionCards
+        : (msg.emotionCard ? [msg.emotionCard] : []);
+    if (emotionCards.length) {
+        const cardsRow = document.createElement('div');
+        cardsRow.className = 'emotion-cards-row';
+        emotionCards.forEach(card => {
+            if (!card || !card.text) return;
+            const pill = document.createElement('div');
+            pill.className = 'emotion-card-pill rarity-' + (card.rarity || 0);
+            pill.title = (card.groupName ? (card.groupName + ' · ') : '') + (card.rarity === 2 ? '特殊' : card.rarity === 1 ? '稀有' : '普通') + '字卡';
+            const pillIcon = document.createElement('span');
+            pillIcon.className = 'emotion-card-pill-icon';
+            pillIcon.textContent = card.icon || '💬';
+            const pillText = document.createElement('span');
+            pillText.className = 'emotion-card-pill-text';
+            pillText.textContent = String(card.text);
+            pill.appendChild(pillIcon);
+            pill.appendChild(pillText);
+            if (card.lv) {
+                const lvBadge = document.createElement('span');
+                lvBadge.className = 'emotion-card-pill-lv';
+                lvBadge.textContent = 'Lv' + card.lv;
+                pill.appendChild(lvBadge);
+            }
+            cardsRow.appendChild(pill);
+        });
+        if (cardsRow.childElementCount) emotionPillEl = cardsRow;
+    }
+
     let actionsHTML = '';
     if (settings.replyEnabled) actionsHTML += `<button class="meta-action-btn reply-btn" title="回复"><i class="fas fa-reply"></i></button>`;
     const starIcon = msg.favorited ? 'fas fa-star' : 'far fa-star';
@@ -1297,9 +1338,17 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
             }
         }
         metaDiv.innerHTML = metaHTML;
-        contentWrapper.append(actionsDiv, messageDiv, metaDiv);
+        if (emotionPillEl) {
+            contentWrapper.append(actionsDiv, messageDiv, emotionPillEl, metaDiv);
+        } else {
+            contentWrapper.append(actionsDiv, messageDiv, metaDiv);
+        }
     } else {
-        contentWrapper.append(actionsDiv, messageDiv);
+        if (emotionPillEl) {
+            contentWrapper.append(actionsDiv, messageDiv, emotionPillEl);
+        } else {
+            contentWrapper.append(actionsDiv, messageDiv);
+        }
     }
     wrapper.appendChild(contentWrapper);
     fragment.appendChild(wrapper);
@@ -1955,6 +2004,12 @@ const q = pool[Math.floor(Math.random() * pool.length)];
                     }
                 }
 
+                // 情绪字卡：仅第一条回复消息有概率附带（💭情绪 ❤️心意 💬意图 三系）
+                let emotionCards = null;
+                if (i === 0 && typeof window._emotionCardsPick === 'function') {
+                    try { emotionCards = window._emotionCardsPick(); } catch (e) { console.warn('[emotion-cards] 触发失败:', e); }
+                }
+
                 addMessage({
                     id: Date.now() + i,
                     sender: settings.partnerName || '对方',
@@ -1963,6 +2018,7 @@ const q = pool[Math.floor(Math.random() * pool.length)];
                     status: 'received',
                     favorited: false,
                     note: null,
+                    emotionCards: emotionCards,
                     replyTo: (i === 0 && recentUserMsgs.length > 0 && Math.random() < 0.3)
                         ? (function(){ const m = recentUserMsgs[Math.floor(Math.random() * recentUserMsgs.length)]; return { id: m.id, text: m.text, sender: m.sender }; })()
                         : null,

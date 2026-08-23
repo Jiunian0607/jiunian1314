@@ -235,6 +235,27 @@
             if (!Object.prototype.hasOwnProperty.call(lsData, k2)) continue;
             lsOut[k2] = processLocalStorageValueForExport(lsData[k2], state);
         }
+
+        // ===== 🔥 显式收集「心意问卷」历史答题记录（不依赖键名遍历，保证一定进备份） =====
+        var surveyRecs = null;
+        if (!flags || flags.inclSurvey !== false) {
+            try {
+                if (typeof window !== 'undefined' && typeof window.callSurveyBackup === 'function') {
+                    surveyRecs = await window.callSurveyBackup('export-data');
+                } else {
+                    var appPfx2 = typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'CHAT_APP_V3_';
+                    var sId2 = typeof SESSION_ID !== 'undefined' ? SESSION_ID : null;
+                    if (sId2 && typeof localforage !== 'undefined') {
+                        surveyRecs = await localforage.getItem(appPfx2 + sId2 + '_surveyRecords');
+                    }
+                }
+                if (surveyRecs != null) surveyRecs = extractMediaTree(surveyRecs, state);
+            } catch (eSurvey) {
+                console.warn('[backup] 读取心意问卷记录失败', eSurvey);
+                surveyRecs = null;
+            }
+        }
+
         return {
             type: 'chatapp-backup-v4',
             formatVersion: 4,
@@ -245,7 +266,8 @@
             modules: flags,
             mediaStore: state.store,
             localforage: lfOut,
-            localStorage: lsOut
+            localStorage: lsOut,
+            surveyRecords: surveyRecs
         };
     }
 
@@ -365,6 +387,7 @@
                     modules: payload.modules,
                     localforage: payload.localforage,
                     localStorage: payload.localStorage,
+                    surveyRecords: payload.surveyRecords,
                     mediaIndex: mediaIndex
                 };
                 zip.file('backup.json', '\uFEFF' + JSON.stringify(jsonBody));
@@ -517,6 +540,38 @@
                 console.warn('[backup] localStorage 恢复失败', targetLsKey, e2);
             }
         }
+
+    // ===== 🔥 从全量备份中恢复「心意问卷」历史答题记录 =====
+    try {
+        var surveyRecs2 = data.surveyRecords;
+        if (surveyRecs2 != null && Array.isArray(surveyRecs2)) {
+            var includeSurvey = true;
+            if (selective) {
+                includeSurvey = opt.selectedCategoryIds && opt.selectedCategoryIds.indexOf('survey') !== -1;
+            }
+            if (includeSurvey) {
+                var surveyKey = appPfx + curSid + '_surveyRecords';
+                if (curSid) {
+                    await localforage.setItem(surveyKey, surveyRecs2);
+                    try {
+                        localStorage.setItem('SV_RECORDS_' + curSid, JSON.stringify(surveyRecs2));
+                    } catch (eLs) {
+                        console.warn('[backup] 写入心意问卷主存储失败（localStorage 可能已满）', eLs);
+                    }
+                }
+                if (typeof window !== 'undefined' && typeof window.callSurveyBackup === 'function') {
+                    window.callSurveyBackup('restore-data', surveyRecs2);
+                }
+                console.log('✅ 全量备份恢复心意问卷历史:', surveyRecs2.length, '条 ->', surveyKey);
+            } else {
+                console.log('ℹ️ 未勾选「心意问卷」分类，跳过恢复');
+            }
+        } else {
+            console.log('ℹ️ 全量备份中未找到心意问卷数据（surveyRecords）');
+        }
+    } catch (errSv) {
+        console.warn('恢复心意问卷失败:', errSv);
+    }
 
     // ===== 🔥 从全量备份中恢复反向提问问题库 =====
     try {
