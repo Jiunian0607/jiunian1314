@@ -118,20 +118,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             } else if (document.visibilityState === 'visible') {
                 try {
-                    const backup = typeof _tryRecoverFromBackup === 'function' ? _tryRecoverFromBackup() : null;
-                    if (backup && Array.isArray(backup.messages) && backup.messages.length > 0 && Array.isArray(messages) && backup.messages.length > messages.length) {
-                        console.warn('[visibilitychange] 检测到备份消息比当前更多，自动尝试恢复');
-                        try {
-                            messages = backup.messages.map(m => ({
-                                ...m,
-                                timestamp: new Date(m.timestamp)
-                            }));
-                            if (backup.settings) Object.assign(settings, backup.settings);
+                    // ===== 🔥 修复：合并紧急备份中比当前更新（且未保存）的消息，而不是整体替换 =====
+                    if (typeof _mergeBackupNewerMessages === 'function') {
+                        const recovered = _mergeBackupNewerMessages();
+                        if (recovered > 0) {
+                            console.warn('[visibilitychange] 检测到备份中有更新消息，自动合并恢复');
                             if (typeof updateUI === 'function') updateUI();
                             if (typeof throttledSaveData === 'function') throttledSaveData();
-                            showNotification('已自动恢复本地临时备份内容', 'warning', 3500);
-                        } catch (restoreErr) {
-                            console.warn('[visibilitychange] 自动恢复失败，保留当前页面内容:', restoreErr);
+                            showNotification(`已恢复上次未保存的 ${recovered} 条消息`, 'warning', 3500);
                         }
                     }
                 } catch (e) {
@@ -142,10 +136,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         window.addEventListener('pagehide', () => {
             try { _backupCriticalData(); } catch (e) {}
+            // ===== 🔥 修复：同时刷一次异步保存，减少仅存于紧急备份的情况 =====
+            try {
+                const p = saveData();
+                if (p && typeof p.catch === 'function') p.catch(e => console.warn('[pagehide] 保存失败:', e));
+            } catch (e) {}
         });
 
         window.addEventListener('beforeunload', () => {
             try { _backupCriticalData(); } catch (e) {}
+            try {
+                const p = saveData();
+                if (p && typeof p.catch === 'function') p.catch(e => console.warn('[beforeunload] 保存失败:', e));
+            } catch (e) {}
         });
 
         setInterval(() => {

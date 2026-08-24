@@ -395,6 +395,16 @@ const loadData = async () => {
                 ...m,
                 timestamp: new Date(m.timestamp)
             }));
+            // ===== 🔥 修复：主存储非空但紧急备份可能有更新消息（上次关闭时异步写入未完成） =====
+            try {
+                const recovered = _mergeBackupNewerMessages();
+                if (recovered > 0) {
+                    setTimeout(() => saveData(), 1000);
+                    showNotification(`已恢复上次未保存的 ${recovered} 条消息`, 'success', 4000);
+                }
+            } catch (e) {
+                console.warn('[loadData] 合并紧急备份消息失败:', e);
+            }
         } else {
             // 尝试从备份恢复
             const backup = _tryRecoverFromBackup();
@@ -675,6 +685,41 @@ function _tryRecoverFromBackup() {
     } catch (e) {
         return null;
     }
+}
+
+// ===== 🔥 修复：将紧急备份中比主存储更新的消息合并回来 =====
+// 上次关闭页面时，防抖+异步的 IndexedDB 写入可能尚未完成，而同步写入的
+// localStorage 紧急备份（BACKUP_V1_critical）中仍有最新消息；
+// 全量备份能看到它们（扫描全部 localStorage），但正常加载只看 IndexedDB，
+// 因此需要在这里补合并。返回合并条数，0 表示无需合并。
+function _mergeBackupNewerMessages() {
+    const backup = _tryRecoverFromBackup();
+    if (!backup || !Array.isArray(backup.messages) || backup.messages.length === 0) return 0;
+    if (backup.sessionId && backup.sessionId !== SESSION_ID) return 0;
+
+    const lastSaved = messages.length > 0 ? messages[messages.length - 1] : null;
+    if (!lastSaved) return 0;
+    const lastSavedTs = new Date(lastSaved.timestamp).getTime();
+    if (!isFinite(lastSavedTs)) return 0;
+
+    const existingIds = new Set();
+    messages.forEach(m => { if (m.id != null) existingIds.add(String(m.id)); });
+
+    const newer = [];
+    backup.messages.forEach(m => {
+        const ts = new Date(m.timestamp).getTime();
+        if (!isFinite(ts)) return;
+        if (ts < lastSavedTs) return;
+        if (ts === lastSavedTs) {
+            if (m.id == null || existingIds.has(String(m.id))) return;
+        }
+        newer.push({ ...m, timestamp: new Date(m.timestamp) });
+    });
+
+    if (newer.length === 0) return 0;
+    messages = messages.concat(newer);
+    console.warn(`[loadData] 已从紧急备份合并恢复 ${newer.length} 条未保存的消息`);
+    return newer.length;
 }
 
 const saveData = async () => {
