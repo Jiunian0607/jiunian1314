@@ -517,9 +517,9 @@ function populateThemeSelector() {
             const root = document.documentElement;
             let chatBg = '';
             try {
-                chatBg = await localforage.getItem(getStorageKey('chatBackground')) || '';
+                chatBg = (await localforage.getItem(getStorageKey('chatBackground'))) || window._currentAppliedBg || '';
             } catch(e) {
-                chatBg = safeGetItem(getStorageKey('chatBackground')) || '';
+                chatBg = safeGetItem(getStorageKey('chatBackground')) || window._currentAppliedBg || '';
             }
             return {
                 colorTheme: settings.colorTheme,
@@ -548,7 +548,7 @@ function populateThemeSelector() {
 
         function captureCurrentScheme() {
             const root = document.documentElement;
-            const chatBg = safeGetItem(getStorageKey('chatBackground')) || '';
+            const chatBg = window._currentAppliedBg || safeGetItem(getStorageKey('chatBackground')) || '';
             
             return {
                 colorTheme: settings.colorTheme,
@@ -616,7 +616,7 @@ function populateThemeSelector() {
             
             if (scheme.chatBackground) {
                 applyBackground(scheme.chatBackground);
-                safeSetItem(getStorageKey('chatBackground'), scheme.chatBackground);
+                // 不再镜像到 localStorage（背景数据统一由 IndexedDB 持久化，避免挤占配额）
             }
 
             updateUI();

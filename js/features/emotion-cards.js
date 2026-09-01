@@ -224,7 +224,7 @@
         return items
             .map(function(it) {
                 if (it && typeof it === 'object' && it.t !== undefined) {
-                    return { t: String(it.t), r: parseInt(it.r) || 0, lv: parseInt(it.lv) || 0 };
+                    return { t: String(it.t), r: parseInt(it.r) || 0, lv: parseInt(it.lv) || 0, cu: it.cu === true };
                 }
                 var s = String(it || '').trim();
                 if (!s) return null;
@@ -240,6 +240,7 @@
             icon: (g && g.icon) || '💬',
             weight: (g && g.weight !== undefined && !isNaN(parseInt(g.weight))) ? (parseInt(g.weight) || 0) : 1,
             enabled: g && g.enabled !== undefined ? !!g.enabled : true,
+            cu: g && g.cu === true,
             items: _normalizeItems(g && g.items)
         };
     }
@@ -276,7 +277,7 @@
             st.heart.groups = (st.heart.groups || []).map(function(g) { return _normalizeGroup(g); });
             if (!st.heart.special || !Array.isArray(st.heart.special)) st.heart.special = _heartDefaults().special;
             st.heart.special = st.heart.special.map(function(g) {
-                return { id: g.id || 's_' + Math.random().toString(36).slice(2, 7), name: g.name || '特殊', icon: g.icon || '🌟', items: _normalizeItems(g.items) };
+                return { id: g.id || 's_' + Math.random().toString(36).slice(2, 7), name: g.name || '特殊', icon: g.icon || '🌟', cu: g.cu === true, items: _normalizeItems(g.items) };
             });
             if (st.heart.specialChance === undefined) st.heart.specialChance = 5;
         }
@@ -343,6 +344,7 @@
         var st = _getState();
         return st.recentDedupe && st.meta.recent.indexOf(text) !== -1;
     }
+
     function _isSpecialOnCooldown(text) {
         var st = _getState();
         if (!st.specialCooldown) return false;
@@ -517,10 +519,10 @@
         var group = null;
         typeCfg.groups.forEach(function(g) { if (!group && g.name === groupName) group = g; });
         if (!group) {
-            group = { id: 'g_' + Math.random().toString(36).slice(2, 7), name: groupName || '自定义', icon: '💬', weight: 1, enabled: true, items: [] };
+            group = { id: 'g_' + Math.random().toString(36).slice(2, 7), name: groupName || '自定义', icon: '💬', weight: 1, enabled: true, cu: true, items: [] };
             typeCfg.groups.push(group);
         }
-        if (!group.items.some(function(x) { return x.t === text; })) group.items.push({ t: text, r: r, lv: 0 });
+        if (!group.items.some(function(x) { return x.t === text; })) group.items.push({ t: text, r: r, lv: 0, cu: true });
         _persist();
         if (typeof renderReplyLibrary === 'function') renderReplyLibrary();
         if (typeof showNotification === 'function') showNotification('✓ 已添加到「' + group.name + '」', 'success');
@@ -576,7 +578,9 @@
         el.isOn = function() { return value; };
         el.addEventListener('click', function(e) {
             e.stopPropagation();
-            cb(!value);
+            value = !value;
+            el.setTo(value);
+            cb(value);
         });
         return el;
     }
@@ -822,7 +826,7 @@
             gname = String(gname).trim();
             if (!gname) return;
             var icon = prompt('分组图标（可留空）：', '💬');
-            data.groups.push({ id: 'g_' + Math.random().toString(36).slice(2, 7), name: gname, icon: (icon && String(icon).trim()) || '💬', weight: 1, enabled: true, items: [] });
+            data.groups.push({ id: 'g_' + Math.random().toString(36).slice(2, 7), name: gname, icon: (icon && String(icon).trim()) || '💬', weight: 1, enabled: true, cu: true, items: [] });
             _persist(); renderAll();
         }));
         addGrpRow.appendChild(_btn('ec-btn', '重命名分组', function() {
@@ -865,10 +869,10 @@
                 if (isNaN(lv)) lv = 1;
                 lv = Math.max(1, Math.min(3, lv));
                 if (g.items.some(function(x) { return x.t === t; })) { showNotification('该字卡已存在', 'warning'); return; }
-                g.items.push({ t: t, r: r, lv: lv });
+                g.items.push({ t: t, r: r, lv: lv, cu: true });
             } else {
                 if (g.items.some(function(x) { return x.t === t; })) { showNotification('该字卡已存在', 'warning'); return; }
-                g.items.push({ t: t, r: r, lv: 0 });
+                g.items.push({ t: t, r: r, lv: 0, cu: true });
             }
             _persist(); renderAll();
         }
@@ -882,7 +886,7 @@
             ri = String(ri || '').trim();
             var r = 0;
             if (ri === '2') r = 1; else if (ri === '3') r = 2;
-            var nv = { t: nt, r: r, lv: item.lv || 0 };
+            var nv = { t: nt, r: r, lv: item.lv || 0, cu: true };
             if (_panelType === 'heart') {
                 var lv = prompt('强度等级（1-3）：', String(item.lv || 1));
                 lv = parseInt(lv);
@@ -1006,9 +1010,9 @@
                 t = String(t).trim();
                 if (!t) return;
                 if (!st.heart.special.length) {
-                    st.heart.special.push({ id: 's_' + Math.random().toString(36).slice(2, 7), name: '自定义', icon: '🌟', items: [] });
+                    st.heart.special.push({ id: 's_' + Math.random().toString(36).slice(2, 7), name: '自定义', icon: '🌟', cu: true, items: [] });
                 }
-                st.heart.special[st.heart.special.length - 1].items.push({ t: t, r: 2, lv: 3 });
+                st.heart.special[st.heart.special.length - 1].items.push({ t: t, r: 2, lv: 3, cu: true });
                 _persist(); renderAll();
             });
             spCard.appendChild(_btn('ec-btn', '+ 新增特殊分组', function() {
@@ -1016,7 +1020,7 @@
                 if (gname === null) return;
                 gname = String(gname).trim();
                 if (!gname) return;
-                st.heart.special.push({ id: 's_' + Math.random().toString(36).slice(2, 7), name: gname, icon: '🌟', items: [] });
+                st.heart.special.push({ id: 's_' + Math.random().toString(36).slice(2, 7), name: gname, icon: '🌟', cu: true, items: [] });
                 _persist(); renderAll();
             }));
             spCard.appendChild(addSp);

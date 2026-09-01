@@ -126,6 +126,278 @@ const ICONS = {
     (document.head || document.documentElement).appendChild(s);
 })();
 
+/* ============================================================
+ * 📨 多字卡回复：从「主字卡」（自定义回复库）随机抽 2~5 条，
+ * 以空格拼接成一条回复，模拟真人连续发多条消息的效果。
+ * 独立于情绪字卡体系，配置存放于回复库「多字卡」页签。
+ * ============================================================ */
+
+const BEAN_EMOJIS = ['😂', '🤣', '😆', '😊', '😝', '😅', '😭', '🥺', '🥹', '😳', '😌', '😴', '🤔', '😮', '😱', '🙃', '😎', '🫠', '😇', '😈', '😏', '🌚', '🌝', '😶', '😬'];
+
+let multiCardConfig = null;
+
+function _multiCardDefaults() {
+    return { enabled: true, chance: 40, minCount: 2, maxCount: 5, dupChance: 4, allowDup: true, beanEmoji: true, beanMax: 2 };
+}
+
+function _normalizeMultiCardConfig(c) {
+    const out = _multiCardDefaults();
+    if (c && typeof c === 'object') {
+        if (c.enabled !== undefined) out.enabled = !!c.enabled;
+        if (!isNaN(parseFloat(c.chance))) out.chance = Math.max(0, Math.min(100, Math.round(parseFloat(c.chance))));
+        const mn = parseInt(c.minCount), mx = parseInt(c.maxCount);
+        if (!isNaN(mn)) out.minCount = Math.max(1, Math.min(5, mn));
+        if (!isNaN(mx)) out.maxCount = Math.max(1, Math.min(5, mx));
+        if (out.maxCount < out.minCount) out.maxCount = out.minCount;
+        if (!isNaN(parseFloat(c.dupChance))) out.dupChance = Math.max(0, Math.min(100, Math.round(parseFloat(c.dupChance))));
+        if (c.allowDup !== undefined) out.allowDup = !!c.allowDup;
+        if (c.beanEmoji !== undefined) out.beanEmoji = !!c.beanEmoji;
+        const bm = parseInt(c.beanMax);
+        if (!isNaN(bm)) out.beanMax = Math.max(0, Math.min(3, bm));
+    }
+    return out;
+}
+
+(function _loadMultiCardConfig() {
+    try {
+        safeLoad(getStorageKey('multiCardConfig'), null).then(saved => {
+            if (saved && typeof saved === 'object') {
+                multiCardConfig = _normalizeMultiCardConfig(saved);
+            } else {
+                multiCardConfig = _multiCardDefaults();
+                safeStore(getStorageKey('multiCardConfig'), multiCardConfig);
+            }
+        }).catch(() => { multiCardConfig = _multiCardDefaults(); });
+    } catch (e) { multiCardConfig = _multiCardDefaults(); }
+})();
+
+function _mcGetConfig() {
+    return multiCardConfig || _multiCardDefaults();
+}
+
+function _mcPersist() {
+    try {
+        safeStore(getStorageKey('multiCardConfig'), _mcGetConfig());
+        if (typeof throttledSaveData === 'function') throttledSaveData();
+    } catch (e) { console.warn('[multi-card] 保存失败:', e); }
+}
+
+/* 主字卡可用池：排除已屏蔽项与禁用分组的字卡 */
+function _collectMainCardPool() {
+    const disabledSet = _getDisabledItemsSet();
+    const disabledGroupItems = new Set();
+    (window.customReplyGroups || []).forEach(g => {
+        if (g.disabled && Array.isArray(g.items)) g.items.forEach(it => disabledGroupItems.add(it));
+    });
+    return (customReplies || [])
+        .filter(r => !disabledSet.has(r) && !disabledGroupItems.has(r))
+        .map(r => String(r || '').trim())
+        .filter(Boolean);
+}
+
+/* 抽取一条多字卡回复文本（未开启、未命中概率或字卡池为空时返回 null） */
+function _pickMultiCardReply() {
+    const cfg = _mcGetConfig();
+    if (!cfg.enabled) return null;
+    if (Math.random() * 100 >= cfg.chance) return null; // 概率触发（默认 40%）
+    const pool = _collectMainCardPool();
+    if (!pool.length) return null; // 空池保护
+    const minC = cfg.minCount;
+    const maxC = Math.max(cfg.minCount, cfg.maxCount);
+    const count = minC + Math.floor(Math.random() * (maxC - minC + 1));
+    const allowDup = cfg.allowDup && Math.random() * 100 < cfg.dupChance; // 重复抽取（4%）
+    const chosen = [];
+    if (allowDup) {
+        for (let k = 0; k < count; k++) chosen.push(pool[Math.floor(Math.random() * pool.length)]);
+    } else {
+        const used = new Set();
+        while (chosen.length < count && used.size < pool.length) {
+            const p = pool[Math.floor(Math.random() * pool.length)];
+            if (!used.has(p)) { used.add(p); chosen.push(p); }
+        }
+    }
+    if (!chosen.length) return null;
+    let text = chosen.join(' '); // 空格拼接 → 一条消息
+    const beanCount = cfg.beanEmoji ? Math.floor(Math.random() * (cfg.beanMax + 1)) : 0;
+    if (beanCount > 0 && BEAN_EMOJIS.length) {
+        const beans = [];
+        for (let b = 0; b < beanCount; b++) beans.push(BEAN_EMOJIS[Math.floor(Math.random() * BEAN_EMOJIS.length)]);
+        text += ' ' + beans.join(' ');
+    }
+    return text;
+}
+window._pickMultiCardReply = _pickMultiCardReply;
+
+/* ── 多字卡配置面板 ── */
+let _mcStyleInjected = false;
+function _mcInjectStyles() {
+    if (_mcStyleInjected) return;
+    _mcStyleInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `
+        .mc-card { background:var(--secondary-bg);border:1.5px solid var(--border-color);border-radius:14px;padding:14px 15px;margin-bottom:10px;font-family:var(--font-family); }
+        .mc-row { display:flex;align-items:center;gap:10px; }
+        .mc-slider { flex:1;accent-color:var(--accent-color);cursor:pointer; }
+        .mc-btn { padding:6px 14px;border-radius:9px;border:1.5px solid var(--border-color);background:var(--primary-bg);color:var(--text-primary);font-size:12px;cursor:pointer;font-family:var(--font-family);transition:all 0.15s; }
+        .mc-btn:hover { border-color:var(--accent-color);color:var(--accent-color); }
+        .mc-btn-primary { border:none;background:var(--accent-color);color:#fff;font-weight:600; }
+        .mc-btn-primary:hover { color:#fff;opacity:0.9; }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+}
+function _mcText(tag, text, style) {
+    const el = document.createElement(tag);
+    if (style) {
+        const parts = [];
+        if (style.fontSize) parts.push('font-size:' + style.fontSize);
+        if (style.weight) parts.push('font-weight:' + style.weight);
+        if (style.color) parts.push('color:' + style.color);
+        if (style.marginTop) parts.push('margin-top:' + style.marginTop);
+        if (style.marginBottom) parts.push('margin-bottom:' + style.marginBottom);
+        if (style.width) parts.push('width:' + style.width);
+        if (style.textAlign) parts.push('text-align:' + style.textAlign);
+        if (style.flex) parts.push('flex:' + style.flex);
+        el.style.cssText = parts.join(';');
+    }
+    if (text !== undefined) el.textContent = text;
+    return el;
+}
+function _mcDiv(cls, style) {
+    const el = document.createElement('div');
+    if (cls) el.className = cls;
+    if (style) {
+        const parts = [];
+        if (style.marginTop) parts.push('margin-top:' + style.marginTop);
+        el.style.cssText = parts.join(';');
+    }
+    return el;
+}
+function _mcBtn(cls, text, cb) {
+    const b = document.createElement('button');
+    b.className = cls;
+    b.textContent = text;
+    b.addEventListener('click', cb);
+    return b;
+}
+function _mcPillToggle(cb) {
+    const el = document.createElement('div');
+    el.style.cssText = 'width:44px;height:24px;border-radius:24px;background:var(--border-color);position:relative;transition:background 0.3s;flex-shrink:0;cursor:pointer;pointer-events:auto;';
+    const knob = document.createElement('div');
+    knob.style.cssText = 'position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:3px;left:3px;transition:left 0.25s;box-shadow:0 1px 3px rgba(0,0,0,0.2);';
+    el.appendChild(knob);
+    let value = false;
+    el.setTo = function(v) {
+        value = !!v;
+        el.style.background = value ? 'var(--accent-color)' : 'var(--border-color)';
+        knob.style.left = value ? '23px' : '3px';
+    };
+    el.isOn = function() { return value; };
+    el.addEventListener('click', function(e) {
+        e.stopPropagation();
+        value = !value;
+        el.setTo(value);
+        cb(value);
+    });
+    return el;
+}
+
+window._renderMultiCardConfigTab = function(list) {
+    _mcInjectStyles();
+    const cfg = _mcGetConfig();
+    list.innerHTML = '';
+    list.className = 'content-list-area';
+
+    const card = _mcDiv('mc-card');
+    card.appendChild(_mcText('div', '📨 多字卡回复 · 配置', { fontSize: '13.5px', weight: '700', color: 'var(--text-primary)', marginBottom: '10px' }));
+
+    const togRow = _mcDiv('mc-row');
+    togRow.appendChild(_mcText('div', '自动触发（TA 回复首条消息时）', { flex: '1', fontSize: '12.5px', color: 'var(--text-primary)' }));
+    const tog = _mcPillToggle(function(now) { cfg.enabled = !!now; _mcPersist(); });
+    tog.setTo(!!cfg.enabled);
+    togRow.appendChild(tog);
+    card.appendChild(togRow);
+
+    const chanceRow = _mcDiv('mc-row');
+    chanceRow.style.marginTop = '12px';
+    chanceRow.appendChild(_mcText('div', '触发概率', { fontSize: '12.5px', color: 'var(--text-primary)', width: '64px' }));
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '5';
+    slider.className = 'mc-slider';
+    slider.value = String(cfg.chance);
+    const pct = _mcText('div', cfg.chance + '%', { fontSize: '12.5px', color: 'var(--accent-color)', weight: '700', width: '40px', textAlign: 'right' });
+    slider.addEventListener('input', function() {
+        cfg.chance = parseInt(slider.value) || 0;
+        pct.textContent = cfg.chance + '%';
+        _mcPersist();
+    });
+    chanceRow.appendChild(slider);
+    chanceRow.appendChild(pct);
+    card.appendChild(chanceRow);
+
+    const cntRow = _mcDiv('mc-row');
+    cntRow.style.marginTop = '12px';
+    cntRow.appendChild(_mcText('div', '条数（每次）', { fontSize: '12.5px', color: 'var(--text-primary)', width: '64px' }));
+    function _countSlider(attr) {
+        const s = document.createElement('input');
+        s.type = 'range'; s.min = '2'; s.max = '5'; s.step = '1';
+        s.className = 'mc-slider';
+        s.value = String(cfg[attr]);
+        const lbl = _mcText('div', s.value + ' 条', { fontSize: '12.5px', color: 'var(--accent-color)', weight: '700', width: '44px', textAlign: 'right' });
+        s.addEventListener('input', function() {
+            let v = parseInt(s.value) || 2;
+            if (attr === 'minCount' && v > cfg.maxCount) v = cfg.maxCount;
+            if (attr === 'maxCount' && v < cfg.minCount) v = cfg.minCount;
+            s.value = String(v);
+            cfg[attr] = v;
+            lbl.textContent = v + ' 条';
+            _mcPersist();
+        });
+        cntRow.appendChild(s);
+        cntRow.appendChild(lbl);
+    }
+    _countSlider('minCount');
+    cntRow.appendChild(_mcText('div', '~', { fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 4px' }));
+    _countSlider('maxCount');
+    card.appendChild(cntRow);
+
+    const dupRow = _mcDiv('mc-row');
+    dupRow.style.marginTop = '12px';
+    dupRow.appendChild(_mcText('div', '重复抽取（4% 概率可出现重复字卡）', { flex: '1', fontSize: '12.5px', color: 'var(--text-primary)' }));
+    const dT = _mcPillToggle(function(now) { cfg.allowDup = !!now; _mcPersist(); });
+    dT.setTo(!!cfg.allowDup);
+    dupRow.appendChild(dT);
+    card.appendChild(dupRow);
+
+    const beanRow = _mcDiv('mc-row');
+    beanRow.style.marginTop = '12px';
+    beanRow.appendChild(_mcText('div', '附带黄豆表情（额外 0~2 个）', { flex: '1', fontSize: '12.5px', color: 'var(--text-primary)' }));
+    const bT = _mcPillToggle(function(now) { cfg.beanEmoji = !!now; _mcPersist(); });
+    bT.setTo(!!cfg.beanEmoji);
+    beanRow.appendChild(bT);
+    card.appendChild(beanRow);
+
+    const pool = _collectMainCardPool();
+    card.appendChild(_mcText('div', '字卡池：主字卡可用 ' + pool.length + ' 条（统计时已排除「已屏蔽」与禁用分组的字卡）', { fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '10px' }));
+    card.appendChild(_mcText('div', '触发时从主字卡随机抽取上述条数，以「空格拼接」渲染为一条消息；不写入去重/冷却，不影响其它回复机制；字卡池为空时不触发', { fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }));
+
+    const btnRow = _mcDiv('mc-row', { marginTop: '10px' });
+    btnRow.appendChild(_mcBtn('mc-btn mc-btn-primary', '🎲 随机预览一次', function() {
+        let t = null;
+        try { t = window._pickMultiCardReply(); } catch (e) {}
+        if (t) showNotification('预览：' + t, 'info', 4500);
+        else showNotification('未触发或字卡池为空', 'warning');
+    }));
+    btnRow.appendChild(_mcBtn('mc-btn', '恢复默认配置', function() {
+        if (!confirm('恢复默认将重置多字卡回复的全部参数，确定？')) return;
+        multiCardConfig = _multiCardDefaults();
+        _mcPersist();
+        renderReplyLibrary();
+    }));
+    card.appendChild(btnRow);
+
+    list.appendChild(card);
+};
+
 function _renderListContentOnly() {
     const list = document.getElementById('custom-replies-list');
     if (!list) return;
@@ -133,6 +405,12 @@ function _renderListContentOnly() {
     // 情绪字卡走独立渲染器
     if (currentMajorTab === 'reply' && currentSubTab === 'emotion') {
         if (typeof window._renderEmotionCardsTab === 'function') window._renderEmotionCardsTab(list);
+        return;
+    }
+
+    // 多字卡配置走独立渲染器
+    if (currentMajorTab === 'reply' && currentSubTab === 'multicard') {
+        if (typeof window._renderMultiCardConfigTab === 'function') window._renderMultiCardConfigTab(list);
         return;
     }
 
@@ -235,6 +513,12 @@ function renderReplyLibrary() {
         return;
     }
 
+    // 多字卡配置走独立渲染器
+    if (currentMajorTab === 'reply' && currentSubTab === 'multicard') {
+        if (typeof window._renderMultiCardConfigTab === 'function') window._renderMultiCardConfigTab(list);
+        return;
+    }
+
     let itemsToRender = [];
     let renderType = 'text';
 
@@ -275,13 +559,14 @@ function renderReplyLibrary() {
 
 function _renderModernToolbar() {
     let toolbar = document.getElementById('batch-ops-toolbar');
-    // 情绪字卡页使用专属面板，隐藏通用工具栏
-    if (currentMajorTab === 'reply' && currentSubTab === 'emotion') {
+    // 情绪字卡 / 多字卡配置页使用专属面板，隐藏通用工具栏
+    if (currentMajorTab === 'reply' && (currentSubTab === 'emotion' || currentSubTab === 'multicard')) {
         if (toolbar) toolbar.style.display = 'none';
         return;
     }
     const isMainCustom = currentMajorTab === 'reply' && currentSubTab === 'custom';
     const isStickersTab = currentMajorTab === 'reply' && currentSubTab === 'stickers';
+    const isStatusTab = currentMajorTab === 'atmosphere' && currentSubTab === 'statuses';
     const hasGroupSupport = _tabHasGroups();
     const canBatch = isMainCustom || isStickersTab;
 
@@ -428,6 +713,10 @@ function _renderModernToolbar() {
                 ${ICONS.dedup}
             </button>
             <div style="flex:1;"></div>
+            ${isStatusTab ? `
+            <button class="toolbar-icon-btn" id="tb-status-random-btn" title="随机切换对方状态" style="width:auto;padding:0 10px;gap:4px;font-size:12px;color:var(--accent-color);">
+                🎲 随机状态
+            </button>` : ''}
             ${canBatch ? `
             <button class="toolbar-icon-btn ${_batchModeActive ? 'active' : ''}" id="tb-batch-btn" title="${_batchModeActive ? '退出批量' : '批量管理'}">
                 ${ICONS.batch}
@@ -488,6 +777,17 @@ function _renderModernToolbar() {
     }
 
     if (hasGroupSupport) toolbar.querySelector('#tb-groups-btn')?.addEventListener('click', _showGroupManager);
+    const tbStatusRandom = toolbar.querySelector('#tb-status-random-btn');
+    if (tbStatusRandom) {
+        tbStatusRandom.onclick = () => {
+            if (typeof window._triggerStatusChange === 'function') {
+                const s = window._triggerStatusChange();
+                if (s && typeof showNotification === 'function') {
+                    showNotification(`✦ 状态已切换为「${s}」`, 'success', 2200);
+                }
+            }
+        };
+    }
     const tbBatch = toolbar.querySelector('#tb-batch-btn');
     if (tbBatch) {
         tbBatch.onclick = () => {

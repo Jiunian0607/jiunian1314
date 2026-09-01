@@ -229,7 +229,7 @@ function renderBackgroundGallery() {
     addBtn.onclick = () => document.getElementById('bg-gallery-input').click();
     list.appendChild(addBtn);
 
-    const currentBg = safeGetItem(getStorageKey('chatBackground'));
+    const currentBg = window._currentAppliedBg || safeGetItem(getStorageKey('chatBackground'));
 
     savedBackgrounds.forEach((bg, index) => {
         const item = document.createElement('div');
@@ -248,7 +248,6 @@ function renderBackgroundGallery() {
         item.onclick = (e) => {
             if (e.target.closest('.bg-delete-btn')) return;
             applyBackground(bg.value);
-            safeSetItem(getStorageKey('chatBackground'), bg.value);
             localforage.setItem(getStorageKey('chatBackground'), bg.value);
             renderBackgroundGallery();
             showNotification('背景已切换', 'success');
@@ -289,6 +288,7 @@ function saveBackgroundGallery() {
 
 const applyBackground = (value) => {
     if (!value || typeof value !== 'string') return;
+    window._currentAppliedBg = value;
     try {
         if (value.startsWith('linear-gradient') || value.startsWith('#') || value.startsWith('rgb')) {
             document.documentElement.style.setProperty('--chat-bg-image', value);
@@ -523,6 +523,8 @@ if ((!savedEmojis || savedEmojis.length === 0) && customEmojis.length === 0) {
             if (lsBg) {
                 applyBackground(lsBg);
                 await safeStore(getStorageKey('chatBackground'), lsBg);
+                // 迁入 IndexedDB 后立即移除外存，释放 localStorage 配额
+                try { localStorage.removeItem(getStorageKey('chatBackground')); } catch (e) {}
             }
         }
 
@@ -576,6 +578,7 @@ const LIBRARY_CONFIG = {
         title: "回复库管理",
         tabs: [
             { id: 'custom', name: '主字卡', mode: 'list' },
+            { id: 'multicard', name: '多字卡', mode: 'list' },
             { id: 'emotion', name: '情绪字卡', mode: 'list' },
             { id: 'emojis', name: 'Emoji', mode: 'grid' },
             { id: 'stickers', name: '表情库', mode: 'grid' }
@@ -637,43 +640,68 @@ window.deleteAnniversaryItem = function(id) {
 };
 
 const _BACKUP_PREFIX = 'BACKUP_V1_';
+
+// localStorage 配额很小（约 5MB），且会被背景图等大体积数据占用；
+// 因此备份采用「分级降级」策略：写入失败时逐级缩小载荷重试，
+// 保证紧急备份总能成功写入（哪怕只保留最新 1 条消息）。
+function _tryWriteBackup(backupPayload) {
+    const tiers = [
+        { maxMessages: 100, withAnniversaries: true },
+        { maxMessages: 50, withAnniversaries: true },
+        { maxMessages: 20, withAnniversaries: true },
+        { maxMessages: 10, withAnniversaries: false },
+        { maxMessages: 3, withAnniversaries: false },
+        { maxMessages: 1, withAnniversaries: false },
+        { maxMessages: 0, withAnniversaries: false }
+    ];
+    for (const tier of tiers) {
+        const messagesToBackup = tier.maxMessages === 0 ? [] : backupPayload.messages.slice(-tier.maxMessages);
+        const payload = {
+            ts: Date.now(),
+            settings: backupPayload.settings,
+            sessionId: backupPayload.sessionId,
+            anniversaries: tier.withAnniversaries ? backupPayload.anniversaries : [],
+            messages: messagesToBackup,
+            _truncated: messagesToBackup.length < backupPayload.messages.length || !tier.withAnniversaries
+        };
+        const json = JSON.stringify(payload);
+        // 载荷仍然过大（例如夹带超大图片消息），换更小的一档重试
+        if (json.length > 4.5 * 1024 * 1024) {
+            continue;
+        }
+        try {
+            localStorage.setItem(_BACKUP_PREFIX + 'critical', json);
+            localStorage.setItem(_BACKUP_PREFIX + 'timestamp', String(Date.now()));
+            return true;
+        } catch (e) {
+            const isQuota = e && (e.name === 'QuotaExceededError' || /QuotaExceeded/i.test(String(e.message)));
+            if (!isQuota) {
+                console.warn('localStorage 备份写入异常:', e);
+                return false;
+            }
+            // 配额不足，继续缩小载荷重试
+        }
+    }
+    return false;
+}
+
+let _backupWarnAt = 0;
 function _backupCriticalData() {
     if (window._skipBackup) return;
-    try {
-        const backupPayload = {
-            ts: Date.now(),
-            messages: messages,
-            settings: settings,
-            sessionId: SESSION_ID,
-            anniversaries: anniversaries
-        };
-
-        let payloadToStore = backupPayload;
-        const msgSizeEstimate = messages.length * 500; 
-        if (msgSizeEstimate > 3 * 1024 * 1024) {
-            payloadToStore = {
-                ...backupPayload,
-                messages: messages.slice(-200),
-                _truncated: true
-            };
+    if (!Array.isArray(messages)) return;
+    const ok = _tryWriteBackup({
+        messages: messages,
+        settings: settings,
+        sessionId: SESSION_ID,
+        anniversaries: anniversaries
+    });
+    if (!ok) {
+        const now = Date.now();
+        // 60 秒内最多警告一次，避免每次发消息都在控制台刷屏
+        if (now - _backupWarnAt > 60000) {
+            _backupWarnAt = now;
+            console.warn('localStorage 紧急备份写入失败（存储空间不足），聊天记录仍保存到 IndexedDB 主存储。');
         }
-
-        const json = JSON.stringify(payloadToStore);
-
-        if (json.length > 4.5 * 1024 * 1024) {
-            const smallerPayload = {
-                ...payloadToStore,
-                messages: messages.slice(-50),
-                _truncated: true
-            };
-            const smallerJson = JSON.stringify(smallerPayload);
-            localStorage.setItem(_BACKUP_PREFIX + 'critical', smallerJson);
-        } else {
-            localStorage.setItem(_BACKUP_PREFIX + 'critical', json);
-        }
-        localStorage.setItem(_BACKUP_PREFIX + 'timestamp', String(Date.now()));
-    } catch (e) {
-        console.warn('localStorage 备份写入失败（可能存储已满）:', e);
     }
 }
 
@@ -2055,6 +2083,14 @@ const q = pool[Math.floor(Math.random() * pool.length)];
                     try { emotionCards = window._emotionCardsPick(); } catch (e) { console.warn('[emotion-cards] 触发失败:', e); }
                 }
 
+                // 多字卡回复：首条消息按概率从「主字卡」抽取多段字卡（空格拼接）替代单句回复
+                if (i === 0 && typeof window._pickMultiCardReply === 'function') {
+                    try {
+                        const multiText = window._pickMultiCardReply();
+                        if (multiText && String(multiText).trim()) finalText = String(multiText);
+                    } catch (e) { console.warn('[multi-card] 多字卡回复触发失败:', e); }
+                }
+
                 addMessage({
                     id: Date.now() + i,
                     sender: settings.partnerName || '对方',
@@ -2681,12 +2717,12 @@ window._triggerStatusChange = function() {
     const groups = window.customStatusGroups || [];
     const allStatuses = (typeof customStatuses !== 'undefined' ? customStatuses : []) || [];
 
-    // 只保留「启用」且「有内容」的分组，内容必须也在 allStatuses 里存在
+    // 只保留「启用」且「有内容」的分组
     const enabledGroups = groups.filter(function(g) {
         return !g.disabled && Array.isArray(g.items) && g.items.length > 0;
     });
 
-    // 收集所有在分组内的状态文本
+    // 收集所有在启用分组内的状态文本
     const groupedItems = new Set();
     enabledGroups.forEach(function(g) { g.items.forEach(function(t) { groupedItems.add(t); }); });
 
@@ -2696,9 +2732,9 @@ window._triggerStatusChange = function() {
     if (enabledGroups.length > 0) {
         // 有启用分组时：随机选一个分组 → 从该分组随机选一条状态
         const pickedGroup = enabledGroups[Math.floor(Math.random() * enabledGroups.length)];
-        const groupPool = pickedGroup.items.filter(function(t) { return allStatuses.includes(t); });
-        if (groupPool.length > 0) {
-            newStatus = groupPool[Math.floor(Math.random() * groupPool.length)];
+        // 直接使用分组内的条目，避免分组内容与总列表不同步时抽不到状态
+        if (pickedGroup.items.length > 0) {
+            newStatus = pickedGroup.items[Math.floor(Math.random() * pickedGroup.items.length)];
         }
     }
 
@@ -2714,7 +2750,7 @@ window._triggerStatusChange = function() {
     }
     if (!newStatus) {
         if (typeof showNotification === 'function') showNotification('状态库为空，请先添加内容', 'warning', 2500);
-        return;
+        return null;
     }
 
     settings.partnerStatus = newStatus;
@@ -2722,6 +2758,7 @@ window._triggerStatusChange = function() {
     settings.nextStatusChange = 1 + Math.random() * 7;
     DOMElements.partner.status.textContent = newStatus;
     throttledSaveData();
+    return newStatus;
 };
 
 const checkStatusChange = () => {

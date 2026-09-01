@@ -311,7 +311,7 @@
             WELCOME_ICONS: [
                 "fas fa-heart", "fas fa-star", "fas fa-moon", "fas fa-sun", "fas fa-cloud", "fas fa-feather", "fas fa-book", "fas fa-music", "fas fa-pen", "fas fa-key", "fas fa-compass", "fas fa-globe", "fas fa-leaf", "fas fa-water", "fas fa-fire", "fas fa-snowflake", "fas fa-umbrella", "fas fa-anchor", "fas fa-bell", "fas fa-gem", "fas fa-crown", "fas fa-dragon", "fas fa-feather-alt", "fas fa-fish", "fas fa-frog", "fas fa-hat-wizard", "fas fa-magic", "fas fa-ring", "fas fa-scroll", "fas fa-shield-alt", "fas fa-dove", "fas fa-cat", "fas fa-dog", "fas fa-horse", "fas fa-otter", "fas fa-paw", "fas fa-spider", "fas fa-kiwi-bird", "fas fa-crow", "fas fa-dove", "fas fa-seedling", "fas fa-tree", "fas fa-mountain", "fas fa-water", "fas fa-wind", "fas fa-volcano", "fas fa-meteor", "fas fa-satellite", "fas fa-rocket", "fas fa-user-astronaut"
             ],
-            PARTNER_STATUSES: [],
+            PARTNER_STATUSES: ["在线", "✨ 在吗", "🎐 发呆中", "在读诗的时候想你", "等你的消息", "想见你(〃'▽'〃)", "出去散步了，很快回来", "在给你写回信", "耳机里放着歌", "今天天气很好，你在干嘛？", "吃了个特别甜的草莓", "思考晚上吃什么", "梦里也见过了", "✔ 已收到思念", "在翻我们的旧照片", "月亮很圆，想要你在旁边"],
             REPLY_MESSAGES: [],
             REPLY_EMOJIS: [],
             POKE_ACTIONS: [],
