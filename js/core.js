@@ -197,6 +197,9 @@ function getDefaultSettings() {
         autoSendInterval: 5,
         allowReadNoReply: false, 
         readNoReplyChance: 0.2,
+        recallEnabled: true,
+        recallChance: 15,
+        recallResendChance: 25,
         timeFormat: 'HH:mm',
         customSoundUrl: '',
         // 音效：两方分别可选（若对应 URL 为空则使用内置预设）
@@ -1121,7 +1124,8 @@ const updateUI = () => {
         '#typing-indicator-toggle': 'typingIndicatorEnabled',
         '#read-no-reply-toggle': 'allowReadNoReply',
         '#emoji-mix-toggle': 'emojiMixEnabled',
-        '#auto-send-toggle': 'autoSendEnabled'
+        '#auto-send-toggle': 'autoSendEnabled',
+        '#recall-toggle': 'recallEnabled'
     };
     for (const [sel, prop] of Object.entries(_pillSyncMap)) {
         const el = document.querySelector(sel);
@@ -1199,6 +1203,21 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
     }
 
     if (msg.type === 'system') {
+        // 拍一拍被撤回：显示可展开的撤回胶囊
+        if (msg.recall && msg.recall.type === 'all' && msg.isPoke) {
+            const recDiv = document.createElement('div');
+            recDiv.className = 'system-message';
+            recDiv.innerHTML = `<div class="recall-capsule-wrap" style="align-items:center;">
+                <div class="recall-capsule" onclick="window._recallToggleCapsule(this)">
+                    <span class="recall-capsule-label">TA撤回了 一 条信息</span>
+                    <i class="fas fa-chevron-down recall-capsule-arrow"></i>
+                </div>
+                <div class="recall-original" style="display:none;"><div class="recall-original-text">${msg.text}</div></div>
+            </div>`;
+            fragment.appendChild(recDiv);
+            lastSenderRef.current = 'system';
+            return fragment;
+        }
         const systemMsgDiv = document.createElement('div');
         systemMsgDiv.className = 'system-message';
         systemMsgDiv.innerHTML = msg.text;
@@ -1304,35 +1323,111 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
         }
     }
 
-    let messageHTML = '';
-    if (msg.replyTo) {
-        const repliedText = msg.replyTo.text || (msg.replyTo.image ? '🖼 图片' : '[消息]');
-        const repliedSender = msg.replyTo.sender === 'user' ? (settings.myName || '我') : (settings.partnerName || '对方');
-        messageHTML += `<div class="reply-indicator" data-reply-id="${msg.replyTo.id || ''}" style="cursor:pointer;" onclick="scrollToQuotedMessage(this)"><span class="reply-indicator-sender">${repliedSender}</span><span class="reply-indicator-text">${repliedText}</span></div>`;
-    }
+    // ── 撤回状态：msg.recall = { type:'all' } / { type:'partial', segments:[..] } / { type:'emotion', emotion:[..] } ──
+    const recall = msg.recall || null;
+    const isWholeRecall = !!(recall && recall.type === 'all');
+    const isPartialRecall = !!(recall && recall.type === 'partial');
+    const recalledSegSet = (isPartialRecall && Array.isArray(recall.segments) && recall.segments.length)
+        ? new Set(recall.segments.map(String)) : null;
 
-    const isImageOnly = !msg.text && !!msg.image;
-    let content = msg.text ? `<div>${msg.text.replace(/\n/g, '<br>')}</div>` : '';
-    if (msg.image) content += `<img src="${msg.image}" class="message-image${isImageOnly ? ' message-image-only' : ''}" alt="图片" style="max-width:${isImageOnly ? '100px' : '100px'}; border-radius: 12px;${!isImageOnly ? ' margin-top: 6px;' : ''} cursor: pointer;" onclick="viewImage('${msg.image}')">`;
-    messageHTML += content;
+    let messageDiv = null;
+    let recallWholeWrap = null;
+    let partialCapsuleWrap = null;
+    let recalledSegmentsHtml = '';
 
-    const messageDiv = document.createElement('div');
-    if (isImageOnly) {
-        messageDiv.className = `message message-${msg.sender === 'user' ? 'sent' : 'received'} message-image-bubble-none`;
+    if (isWholeRecall) {
+        // ① 整条撤回：气泡区替换为「TA撤回了 一 条信息」胶囊，原文改为可展开
+        recallWholeWrap = document.createElement('div');
+        recallWholeWrap.className = 'recall-capsule-wrap';
+        recallWholeWrap.innerHTML = `
+            <div class="recall-capsule" onclick="window._recallToggleCapsule(this)">
+                <span class="recall-capsule-label">TA撤回了 一 条信息</span>
+                <i class="fas fa-chevron-down recall-capsule-arrow"></i>
+            </div>
+            <div class="recall-original" style="display:none;"></div>`;
+        let origHTML = '';
+        if (msg.replyTo) {
+            const repliedText = msg.replyTo.text || (msg.replyTo.image ? '🖼 图片' : '[消息]');
+            const repliedSender = msg.replyTo.sender === 'user' ? (settings.myName || '我') : (settings.partnerName || '对方');
+            origHTML += `<div class="reply-indicator" data-reply-id="${msg.replyTo.id || ''}" style="cursor:pointer;" onclick="scrollToQuotedMessage(this)"><span class="reply-indicator-sender">${repliedSender}</span><span class="reply-indicator-text">${repliedText}</span></div>`;
+        }
+        const origIsImageOnly = !msg.text && !!msg.image;
+        if (msg.text) origHTML += `<div>${msg.text.replace(/\n/g, '<br>')}</div>`;
+        if (msg.image) origHTML += `<img src="${msg.image}" class="message-image${origIsImageOnly ? ' message-image-only' : ''}" alt="图片" style="max-width:100px; border-radius: 12px;${!origIsImageOnly ? ' margin-top: 6px;' : ''} cursor: pointer;" onclick="viewImage('${msg.image}')">`;
+        const origBubble = document.createElement('div');
+        origBubble.className = origIsImageOnly
+            ? `message message-${msg.sender === 'user' ? 'sent' : 'received'} message-image-bubble-none`
+            : `message message-${msg.sender === 'user' ? 'sent' : 'received'} ${settings.bubbleStyle}`;
+        origBubble.innerHTML = origHTML;
+        recallWholeWrap.querySelector('.recall-original').appendChild(origBubble);
     } else {
-        messageDiv.className = `message message-${msg.sender === 'user' ? 'sent' : 'received'} ${settings.bubbleStyle}`;
+        let messageHTML = '';
+        if (msg.replyTo) {
+            const repliedText = msg.replyTo.text || (msg.replyTo.image ? '🖼 图片' : '[消息]');
+            const repliedSender = msg.replyTo.sender === 'user' ? (settings.myName || '我') : (settings.partnerName || '对方');
+            messageHTML += `<div class="reply-indicator" data-reply-id="${msg.replyTo.id || ''}" style="cursor:pointer;" onclick="scrollToQuotedMessage(this)"><span class="reply-indicator-sender">${repliedSender}</span><span class="reply-indicator-text">${repliedText}</span></div>`;
+        }
+
+        const isImageOnly = !msg.text && !!msg.image;
+        let content = '';
+        if (msg.text) {
+            let shownText = msg.text;
+            if (isPartialRecall && recalledSegSet) {
+                // ② 局部撤回：按空白拆段，被撤回的段隐藏，其余正常显示
+                const parts = msg.text.split(/(\s+)/);
+                const rebuiltParts = [];
+                const recalledParts = [];
+                let segCounter = 0;
+                for (let p = 0; p < parts.length; p++) {
+                    if (p % 2 === 1) continue; // 分隔符：重建时统一用空格连接
+                    const seg = parts[p];
+                    if (!seg) continue;
+                    const segIdx = segCounter++;
+                    if (recalledSegSet.has(String(segIdx))) recalledParts.push(seg);
+                    else rebuiltParts.push(seg);
+                }
+                shownText = rebuiltParts.join(' ');
+                recalledSegmentsHtml = recalledParts.join(' ');
+            }
+            content += `<div>${shownText.replace(/\n/g, '<br>')}</div>`;
+        }
+        if (msg.image) content += `<img src="${msg.image}" class="message-image${isImageOnly ? ' message-image-only' : ''}" alt="图片" style="max-width:${isImageOnly ? '100px' : '100px'}; border-radius: 12px;${!isImageOnly ? ' margin-top: 6px;' : ''} cursor: pointer;" onclick="viewImage('${msg.image}')">`;
+        messageHTML += content;
+
+        messageDiv = document.createElement('div');
+        if (isImageOnly) {
+            messageDiv.className = `message message-${msg.sender === 'user' ? 'sent' : 'received'} message-image-bubble-none`;
+        } else {
+            messageDiv.className = `message message-${msg.sender === 'user' ? 'sent' : 'received'} ${settings.bubbleStyle}`;
+        }
+        messageDiv.innerHTML = messageHTML;
     }
-    messageDiv.innerHTML = messageHTML;
+
+    if (isPartialRecall && recalledSegSet && recalledSegmentsHtml) {
+        partialCapsuleWrap = document.createElement('div');
+        partialCapsuleWrap.className = 'recall-capsule-wrap recap-partial';
+        partialCapsuleWrap.innerHTML = `
+            <div class="recall-capsule" onclick="window._recallToggleCapsule(this)">
+                <span class="recall-capsule-label">TA撤回了 ${(recall.segments || []).length} 条信息</span>
+                <i class="fas fa-chevron-down recall-capsule-arrow"></i>
+            </div>
+            <div class="recall-original" style="display:none;align-self:stretch;width:100%;">
+                <div class="recall-original-text">${recalledSegmentsHtml.replace(/\n/g, '<br>')}</div>
+            </div>`;
+    }
 
     // ── 情绪字卡：气泡下方附带的独立小卡片（💭情绪 / ❤️心意 / 💬意图 三系）──
     let emotionPillEl = null;
     const emotionCards = (Array.isArray(msg.emotionCards) && msg.emotionCards.length)
         ? msg.emotionCards
         : (msg.emotionCard ? [msg.emotionCard] : []);
-    if (emotionCards.length) {
+    const recalledEmoSet = (recall && recall.type === 'emotion' && Array.isArray(recall.emotion) && recall.emotion.length)
+        ? new Set(recall.emotion.map(String)) : null;
+    if (!isWholeRecall && emotionCards.length) {
         const cardsRow = document.createElement('div');
         cardsRow.className = 'emotion-cards-row';
-        emotionCards.forEach(card => {
+        const recalledPills = [];
+        emotionCards.forEach((card, idx) => {
             if (!card || !card.text) return;
             const pill = document.createElement('div');
             pill.className = 'emotion-card-pill rarity-' + (card.rarity || 0);
@@ -1351,8 +1446,22 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
                 lvBadge.textContent = 'Lv' + card.lv;
                 pill.appendChild(lvBadge);
             }
-            cardsRow.appendChild(pill);
+            // ③ 情绪字卡撤回：被撤回的字卡收进胶囊，默认隐藏
+            if (recalledEmoSet && recalledEmoSet.has(String(idx))) recalledPills.push(pill);
+            else cardsRow.appendChild(pill);
         });
+        if (recalledEmoSet && recalledPills.length) {
+            const capWrap = document.createElement('div');
+            capWrap.className = 'recall-capsule-wrap recap-emotion';
+            capWrap.innerHTML = `
+                <div class="recall-capsule" onclick="window._recallToggleCapsule(this)">
+                    <span class="recall-capsule-label">TA撤回了 ${recalledPills.length} 条情绪字卡</span>
+                    <i class="fas fa-chevron-down recall-capsule-arrow"></i>
+                </div>
+                <div class="recall-original emotion-cards-row" style="display:none;"></div>`;
+            recalledPills.forEach(p => capWrap.querySelector('.recall-original').appendChild(p));
+            cardsRow.appendChild(capWrap);
+        }
         if (cardsRow.childElementCount) emotionPillEl = cardsRow;
     }
 
@@ -1411,17 +1520,26 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
             }
         }
         metaDiv.innerHTML = metaHTML;
-        if (emotionPillEl) {
-            contentWrapper.append(actionsDiv, messageDiv, emotionPillEl, metaDiv);
+        const appendParts = [actionsDiv];
+        if (recallWholeWrap) {
+            appendParts.push(recallWholeWrap);
         } else {
-            contentWrapper.append(actionsDiv, messageDiv, metaDiv);
+            appendParts.push(messageDiv);
+            if (partialCapsuleWrap) appendParts.push(partialCapsuleWrap);
         }
+        if (emotionPillEl) appendParts.push(emotionPillEl);
+        appendParts.push(metaDiv);
+        contentWrapper.append(...appendParts);
     } else {
-        if (emotionPillEl) {
-            contentWrapper.append(actionsDiv, messageDiv, emotionPillEl);
+        const appendParts = [actionsDiv];
+        if (recallWholeWrap) {
+            appendParts.push(recallWholeWrap);
         } else {
-            contentWrapper.append(actionsDiv, messageDiv);
+            appendParts.push(messageDiv);
+            if (partialCapsuleWrap) appendParts.push(partialCapsuleWrap);
         }
+        if (emotionPillEl) appendParts.push(emotionPillEl);
+        contentWrapper.append(...appendParts);
     }
     wrapper.appendChild(contentWrapper);
     fragment.appendChild(wrapper);
@@ -1523,6 +1641,8 @@ const addMessage = (message) => {
 
     const prevMsg = messages.length > 0 ? messages[messages.length - 1] : null;
     messages.push(message);
+    
+    if (typeof window._recallTrySchedule === 'function') window._recallTrySchedule(message);
     
     if (wasEmpty) {
         DOMElements.emptyState.style.display = 'none';
@@ -1713,7 +1833,7 @@ window._triggerPartnerPoke = function() {
         ? window._formatPartnerPokeText(`${settings.partnerName} ${pokeAction}`)
         : `${settings.partnerName} ${pokeAction}`;
 
-    addMessage({ id: Date.now(), text: pokeText, timestamp: new Date(), type: 'system' });
+    addMessage({ id: Date.now(), text: pokeText, timestamp: new Date(), type: 'system', isPoke: true });
     if (typeof playSound === 'function') playSound('partner_poke');
     (function(){try{if(window._typingIndicatorAutoHideTimer){clearTimeout(window._typingIndicatorAutoHideTimer);window._typingIndicatorAutoHideTimer=null;}}catch(e){}var _tiW=document.getElementById('typing-indicator-wrapper');if(_tiW){var _tiInner=_tiW.querySelector('.typing-indicator');if(_tiInner){_tiInner.classList.add('hiding');setTimeout(function(){_tiW.style.display='none';if(_tiInner)_tiInner.classList.remove('hiding');},240);}else{_tiW.style.display='none';}}})();
 };

@@ -1253,6 +1253,28 @@
                         </div>
                     </div>
 
+                    <p class="cs-group-label" style="margin-top:4px;">撤回模拟</p>
+                    <div class="cs-card">
+                        <div class="setting-pill-row" id="recall-toggle">
+                            <span class="setting-pill-icon"><i class="fas fa-undo-alt"></i></span>
+                            <span class="setting-pill-label">撤回回复 <span style="font-size:11px;color:var(--text-secondary);font-weight:400;">TA 有一定概率撤回刚发的消息</span></span>
+                            <div class="setting-pill-switch"><div class="setting-pill-knob"></div></div>
+                        </div>
+                        <div id="recall-control" style="display:none;">
+                            <div class="cs-slider-row" style="border-top:1px solid var(--border-color);margin-top:4px;padding-top:10px;">
+                                <span class="cs-slider-label">撤回概率</span>
+                                <input type="range" min="0" max="100" step="1" value="15" class="font-size-slider" id="recall-chance-slider">
+                                <span class="cs-slider-val" id="recall-chance-value">15%</span>
+                            </div>
+                            <div class="cs-slider-row">
+                                <span class="cs-slider-label">撤回补发</span>
+                                <input type="range" min="0" max="100" step="1" value="25" class="font-size-slider" id="recall-resend-slider">
+                                <span class="cs-slider-val" id="recall-resend-value">25%</span>
+                            </div>
+                            <div style="font-size:11px;color:var(--text-secondary);padding:2px 4px 4px;line-height:1.7;">撤回后还可点击「撤回提示」展开查看原文；补发指撤回后 TA 有概率重新发送一条新消息。</div>
+                        </div>
+                    </div>
+
                     <p class="cs-group-label" style="margin-top:4px;">通话功能</p>
                     <div class="cs-card">
                         <div class="setting-pill-row" id="call-feature-toggle-row">
@@ -2600,6 +2622,7 @@
     <script src="js/features/envelope.js"></script>
     <script src="js/features/reply-library.js"></script>
 <script src="js/features/emotion-cards.js"></script>
+    <script src="js/features/recall.js"></script>
     <script src="js/features/theme-editor.js"></script>
     <script src="js/features/group-chat.js"></script>
     <script src="js/features/call.js"></script>

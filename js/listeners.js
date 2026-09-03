@@ -438,7 +438,8 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
         '#read-receipts-toggle': { prop: 'readReceiptsEnabled', name: '已读回执' },
         '#typing-indicator-toggle': { prop: 'typingIndicatorEnabled', name: '正在输入' },
         '#read-no-reply-toggle': { prop: 'allowReadNoReply', name: '已读不回' },
-        '#emoji-mix-toggle': { prop: 'emojiMixEnabled', name: '表情消息' }
+        '#emoji-mix-toggle': { prop: 'emojiMixEnabled', name: '表情消息' },
+        '#recall-toggle': { prop: 'recallEnabled', name: '撤回模拟' }
     };
     for (const [selector, { prop }] of Object.entries(toggleSyncMap)) {
         const el = document.querySelector(selector);
@@ -487,6 +488,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
     if (autoToggle) autoToggle.classList.toggle('active', !!settings.autoSendEnabled);
     updateAutoSendUI();
     updateDelayUI();
+    updateRecallUI();
     const immToggle = document.getElementById('immersive-toggle');
     if (immToggle) immToggle.classList.toggle('active', document.body.classList.contains('immersive-mode'));
     const rrStyle = settings.readReceiptStyle || 'icon';
@@ -1085,6 +1087,48 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                     if (prop !== 'soundEnabled') renderMessages(true);
                     showNotification(`${name}已${settings[prop] ? '开启': '关闭'}`, 'success');
                 });
+            }
+
+            // ── 撤回模拟：开关 + 概率滑杆 ──
+            const recallToggleEl = document.getElementById('recall-toggle');
+            const recallControlEl = document.getElementById('recall-control');
+            const recallChanceSliderEl = document.getElementById('recall-chance-slider');
+            const recallChanceValueEl = document.getElementById('recall-chance-value');
+            const recallResendSliderEl = document.getElementById('recall-resend-slider');
+            const recallResendValueEl = document.getElementById('recall-resend-value');
+
+            function updateRecallUI() {
+                const enabled = settings.recallEnabled !== false;
+                if (recallToggleEl) recallToggleEl.classList.toggle('active', enabled);
+                if (recallControlEl) recallControlEl.style.display = enabled ? '' : 'none';
+                if (recallChanceSliderEl) recallChanceSliderEl.value = settings.recallChance;
+                if (recallChanceValueEl) recallChanceValueEl.textContent = (settings.recallChance || 0) + '%';
+                if (recallResendSliderEl) recallResendSliderEl.value = settings.recallResendChance;
+                if (recallResendValueEl) recallResendValueEl.textContent = (settings.recallResendChance || 0) + '%';
+            }
+            updateRecallUI();
+
+            if (recallToggleEl) recallToggleEl.addEventListener('click', () => {
+                settings.recallEnabled = !(settings.recallEnabled !== false);
+                throttledSaveData();
+                updateUI();
+                updateRecallUI();
+                showNotification(`撤回模拟已${settings.recallEnabled ? '开启' : '关闭'}`, 'success');
+            });
+
+            if (recallChanceSliderEl) {
+                recallChanceSliderEl.addEventListener('input', (e) => {
+                    settings.recallChance = parseInt(e.target.value, 10);
+                    if (recallChanceValueEl) recallChanceValueEl.textContent = settings.recallChance + '%';
+                });
+                recallChanceSliderEl.addEventListener('change', throttledSaveData);
+            }
+            if (recallResendSliderEl) {
+                recallResendSliderEl.addEventListener('input', (e) => {
+                    settings.recallResendChance = parseInt(e.target.value, 10);
+                    if (recallResendValueEl) recallResendValueEl.textContent = settings.recallResendChance + '%';
+                });
+                recallResendSliderEl.addEventListener('change', throttledSaveData);
             }
 
             const soundVolSlider = document.getElementById('sound-volume-slider');
