@@ -172,7 +172,7 @@ function getDefaultSettings() {
         readReceiptsEnabled: true,
         replyEnabled: true,
         lastStatusChange: Date.now(),
-        nextStatusChange: 1 + Math.random() * 7,
+        nextStatusChange: 0.5 + Math.random() * 1.5,
         fontSize: 16,
         bubbleStyle: 'standard',
         messageFontFamily: "'Noto Serif SC', serif",
@@ -2875,7 +2875,7 @@ window._triggerStatusChange = function() {
 
     settings.partnerStatus = newStatus;
     settings.lastStatusChange = Date.now();
-    settings.nextStatusChange = 1 + Math.random() * 7;
+    settings.nextStatusChange = 0.5 + Math.random() * 1.5;
     DOMElements.partner.status.textContent = newStatus;
     throttledSaveData();
     return newStatus;
@@ -2886,6 +2886,16 @@ const checkStatusChange = () => {
         window._triggerStatusChange();
     }
 };
+
+// 独立于应用初始化流程注册状态切换轮询，防止初始化中途异常导致定时器未启动
+if (!window._statusCheckAutoRegistered) {
+    window._statusCheckAutoRegistered = true;
+    setInterval(checkStatusChange, 60000);
+    setTimeout(checkStatusChange, 3000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkStatusChange();
+    });
+}
 
 
 

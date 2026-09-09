@@ -31,7 +31,9 @@ let _batchModeTarget = 'custom'; // 'custom' or 'stickers' (depends on currentSu
 let _searchVisible = false;
 let _searchQuery = '';
 let _searchDebounceTimer = null;
-let _activeGroupFilter = null; 
+let _activeGroupFilter = null;
+let _rlStatusEstVisible = false;
+let _rlStatusEstTimer = null;
 
 const GROUP_COLORS = [
     '#FF6B6B','#FF8E53','#FFC542','#51CF66',
@@ -475,6 +477,11 @@ function renderReplyLibrary() {
     const titleEl = document.getElementById('cr-modal-title');
     if (!list) return;
 
+    if (!(currentMajorTab === 'atmosphere' && currentSubTab === 'statuses')) {
+        _rlStatusEstVisible = false;
+        if (_rlStatusEstTimer) { clearInterval(_rlStatusEstTimer); _rlStatusEstTimer = null; }
+    }
+
     const currentConfig = LIBRARY_CONFIG[currentMajorTab];
     if (titleEl) titleEl.textContent = currentConfig.title;
 
@@ -555,6 +562,26 @@ function renderReplyLibrary() {
     } else {
         _renderAtmosphereList(list, filtered);
     }
+}
+
+function _formatEstDuration(ms) {
+    if (ms <= 0) return '即将切换';
+    const totalSec = Math.ceil(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return m > 0 ? `${h}小时${m}分` : `${h}小时`;
+    if (m > 0) return s > 0 ? `${m}分${s}秒` : `${m}分钟`;
+    return `${s}秒`;
+}
+
+function _updateStatusEstimate() {
+    const textEl = document.getElementById('status-est-text');
+    if (!textEl) return;
+    const s = settings;
+    if (!s || !isFinite(s.nextStatusChange)) { textEl.textContent = '预计下次切换状态为：未知'; return; }
+    const remaining = s.nextStatusChange * 36e5 - (Date.now() - (s.lastStatusChange || Date.now()));
+    textEl.textContent = `预计下次切换状态为：${_formatEstDuration(remaining)}`;
 }
 
 function _renderModernToolbar() {
@@ -714,8 +741,11 @@ function _renderModernToolbar() {
             </button>
             <div style="flex:1;"></div>
             ${isStatusTab ? `
-            <button class="toolbar-icon-btn" id="tb-status-random-btn" title="随机切换对方状态" style="width:auto;padding:0 10px;gap:4px;font-size:12px;color:var(--accent-color);">
+            <button class="toolbar-icon-btn" id="tb-status-random-btn" title="随机切换对方状态" style="width:auto;height:26px;padding:0 6px;gap:3px;font-size:11px;border-radius:8px;color:var(--accent-color);">
                 🎲 随机状态
+            </button>
+            <button class="toolbar-icon-btn ${_rlStatusEstVisible ? 'active' : ''}" id="tb-status-est-btn" title="查看预计下次切换状态" style="width:auto;height:26px;padding:0 6px;gap:3px;font-size:11px;border-radius:8px;color:var(--accent-color);">
+                ⏱ 预计时间
             </button>` : ''}
             ${canBatch ? `
             <button class="toolbar-icon-btn ${_batchModeActive ? 'active' : ''}" id="tb-batch-btn" title="${_batchModeActive ? '退出批量' : '批量管理'}">
@@ -728,6 +758,12 @@ function _renderModernToolbar() {
                 ${ICONS.export}
             </button>
         </div>
+
+        ${_rlStatusEstVisible ? `
+        <div id="status-est-line" style="display:flex;align-items:center;gap:8px;padding:8px 15px;border-bottom:1px solid var(--border-color);background:rgba(var(--accent-color-rgb,180,140,100),0.06);font-size:12px;color:var(--text-secondary);animation:slideDown 0.18s ease;">
+            <span style="font-size:14px;">⏳</span>
+            <span id="status-est-text">正在计算…</span>
+        </div>` : ''}
 
         ${_searchVisible ? `
         <div class="search-input-line">
@@ -787,6 +823,18 @@ function _renderModernToolbar() {
                 }
             }
         };
+    }
+    const tbStatusEst = toolbar.querySelector('#tb-status-est-btn');
+    if (tbStatusEst) {
+        tbStatusEst.onclick = () => {
+            _rlStatusEstVisible = !_rlStatusEstVisible;
+            renderReplyLibrary();
+        };
+    }
+    if (_rlStatusEstVisible) {
+        _updateStatusEstimate();
+        if (_rlStatusEstTimer) clearInterval(_rlStatusEstTimer);
+        _rlStatusEstTimer = setInterval(_updateStatusEstimate, 1000);
     }
     const tbBatch = toolbar.querySelector('#tb-batch-btn');
     if (tbBatch) {

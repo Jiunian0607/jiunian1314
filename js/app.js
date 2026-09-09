@@ -80,8 +80,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('📸 Moments 模块未加载，朋友圈功能不可用');
 }
 
-        setInterval(checkStatusChange, 60000);
-
         if (disclaimerModal) {
             const tourSeen = await safeAwait(localforage?.getItem(APP_PREFIX + 'tour_seen'), false);
             
