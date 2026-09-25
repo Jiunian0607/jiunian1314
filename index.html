@@ -11,6 +11,7 @@
     <title>传讯</title>
     <link rel="stylesheet" href="css/decision.css">
     <link rel="stylesheet" href="css/survey.css">
+    <link rel="stylesheet" href="css/location.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet">
@@ -213,6 +214,105 @@
         </div>
     </div>
 </div>
+<!-- TA的位置模态框 -->
+<div class="modal" id="location-modal">
+    <div class="modal-content">
+        <div class="loc-nav">
+            <button class="loc-back-btn" id="loc-back-btn"><i class="fas fa-chevron-left"></i></button>
+            <span class="loc-nav-title">TA在身边 · TA 的位置</span>
+            <span class="loc-nav-spacer"></span>
+        </div>
+        <div class="loc-scroll" id="location-view-root">
+            <div class="loc-compass-wrap">
+                <div class="fw-circle" id="loc-compass">
+                    <div class="fw-dir" data-dir="左前方" style="--angle:315deg">↖</div>
+                    <div class="fw-dir" data-dir="正前方" style="--angle:0deg">↑</div>
+                    <div class="fw-dir" data-dir="右前方" style="--angle:45deg">↗</div>
+                    <div class="fw-dir" data-dir="右侧" style="--angle:90deg">→</div>
+                    <div class="fw-dir" data-dir="右后方" style="--angle:135deg">↘</div>
+                    <div class="fw-dir" data-dir="后方" style="--angle:180deg">↓</div>
+                    <div class="fw-dir" data-dir="左后方" style="--angle:225deg">↙</div>
+                    <div class="fw-dir" data-dir="左侧" style="--angle:270deg">←</div>
+                    <div class="fw-center" id="loc-compass-center"><i class="fas fa-user"></i><span>你</span></div>
+                </div>
+                <div class="loc-compass-label" id="loc-compass-label">↑ 正前方</div>
+            </div>
+            <div class="loc-attrs">
+                <div class="loc-attr">
+                    <div class="loc-attr-label">方向</div>
+                    <div class="loc-attr-val" id="loc-attr-dir">↑ 正前方</div>
+                </div>
+                <div class="loc-attr">
+                    <div class="loc-attr-label">距离感</div>
+                    <div class="loc-attr-val" id="loc-attr-range">很远</div>
+                </div>
+                <div class="loc-attr">
+                    <div class="loc-attr-label">感知强度</div>
+                    <div class="loc-attr-val" id="loc-attr-power">明显</div>
+                </div>
+            </div>
+            <button class="loc-sense-btn" id="loc-sense-btn"><i class="fas fa-satellite-dish"></i> 感知一下</button>
+            <div class="loc-result" id="loc-result">
+                <div class="loc-result-title">方位感知 · <b>TA</b></div>
+                <div class="loc-result-dir" id="loc-result-dir">· · ·</div>
+                <div class="loc-result-sub" id="loc-result-sub">点击「感知一下」感受 TA 的方向</div>
+                <div class="loc-result-touch" id="loc-result-touch" style="display:none;"></div>
+            </div>
+            <div class="loc-card">
+                <div class="loc-card-head"><span class="loc-dot"></span>你感觉到的</div>
+                <div class="loc-card-body" id="loc-feel-text">你感觉到 TA 在你前面</div>
+            </div>
+            <div class="loc-card">
+                <div class="loc-card-head"><i class="fas fa-location-dot"></i>此刻的位置</div>
+                <div class="loc-card-body loc-now">
+                    <span id="loc-now-text">在你前面 一直在原地等你</span>
+                    <span class="loc-now-meta" id="loc-now-meta">--:--</span>
+                </div>
+            </div>
+            <div class="loc-card">
+                <div class="loc-card-head"><i class="fas fa-clock-rotate-left"></i>位置时间线</div>
+                <div class="loc-timeline-nav">
+                    <button id="loc-date-prev">‹</button>
+                    <span id="loc-date-label">今天</span>
+                    <button id="loc-date-next">›</button>
+                </div>
+                <div id="loc-timeline-list"></div>
+                <div class="loc-timeline-foot">
+                    <div class="loc-tools">
+                        <button class="loc-tool-btn" id="loc-export-btn"><i class="fas fa-download"></i> 导出</button>
+                        <button class="loc-tool-btn" id="loc-import-btn"><i class="fas fa-upload"></i> 导入</button>
+                        <button class="loc-tool-btn loc-tool-danger" id="loc-clear-btn"><i class="fas fa-trash-alt"></i> 清空</button>
+                    </div>
+                    <div class="loc-timeline-count" id="loc-timeline-count">共 0 条</div>
+                </div>
+                <input type="file" id="loc-import-file" accept=".json,application/json" style="display:none;">
+            </div>
+            <div class="loc-settings">
+                <div class="loc-setting-row" id="loc-toggle-auto">
+                    <span class="loc-setting-icon"><i class="fas fa-arrows-rotate"></i></span>
+                    <span class="loc-setting-label">TA 自动换位</span>
+                    <div class="loc-switch" id="loc-auto-pill"><div class="loc-knob"></div></div>
+                </div>
+                <div class="loc-setting-row" id="loc-toggle-popup">
+                    <span class="loc-setting-icon"><i class="fas fa-bell"></i></span>
+                    <span class="loc-setting-label">换位提醒弹窗</span>
+                    <div class="loc-switch" id="loc-popup-pill"><div class="loc-knob"></div></div>
+                </div>
+            </div>
+            <button class="loc-ask-btn" id="loc-ask-btn"><i class="fas fa-comment-dots"></i> 问 TA 一声「你在哪？」</button>
+            <div class="loc-foot-hint" id="loc-sense-hint">每次感知将记录到位置时间线</div>
+        </div>
+    </div>
+</div>
+<div class="loc-popup-mask" id="loc-popup-mask">
+    <div class="loc-popup">
+        <div class="loc-popup-icon"><i class="fas fa-location-arrow"></i></div>
+        <div class="loc-popup-title" id="loc-popup-title">TA 换了个位置</div>
+        <div class="loc-popup-text" id="loc-popup-text"></div>
+        <button class="loc-popup-btn" id="loc-popup-btn">知道啦</button>
+    </div>
+</div>
+<div class="loc-fx" id="loc-fx"><div class="loc-fx-inner"></div></div>
 <div id="tour-overlay" class="tour-overlay">
     <div id="tour-highlight-box" class="tour-highlight-box"></div>
     <div id="tour-popover" class="tour-popover">
@@ -1497,6 +1597,10 @@
                         <i class="fas fa-clipboard-list"></i>
                         <span>心意问卷</span>
                     </div>
+                    <div class="settings-item" id="location-function">
+                        <i class="fas fa-location-dot"></i>
+                        <span>TA的位置</span>
+                    </div>
                     <div class="settings-item" id="fortune-lenormand-function" style="position:relative;">
                         <i class="fas fa-star-and-crescent"></i><span>运势 · 占卜</span>
                     </div>
@@ -2627,6 +2731,7 @@
     <script src="js/features/group-chat.js"></script>
     <script src="js/features/call.js"></script>
     <script src="js/features/survey.js"></script>
+    <script src="js/features/location.js"></script>
 
     <!-- == 合并模块 == -->
     <script src="js/games.js"></script> 

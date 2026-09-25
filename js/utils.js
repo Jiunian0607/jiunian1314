@@ -467,6 +467,12 @@ async function importAllData(file) {
                 localStorageNeedles: []
             },
             {
+                id: 'location',
+                label: 'TA的位置（感知记录）',
+                indexedDBNeedles: ['locationData'],
+                localStorageNeedles: []
+            },
+            {
                 id: 'themes',
                 label: '主题 / 外观 / 图库',
                 indexedDBNeedles: ['customThemes', 'themeSchemes', 'backgroundGallery', 'chatBackground', 'partnerAvatar', 'myAvatar', 'partnerPersonas'],
