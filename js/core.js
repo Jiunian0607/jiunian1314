@@ -1,5 +1,7 @@
 /*核心应用逻辑：数据加载保存、消息渲染、会话管理等*/
 let customReverseQuestions = [];
+let _dataLoadCompleted = false;
+let _messagesSafeToPersist = false;
 function clearAllAppData() {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
@@ -327,14 +329,33 @@ async function migrateToSeparatedStorage() {
         console.error('❌ 数据迁移失败:', e);
     }
 }
+async function _readMessagesWithRetry() {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const value = await localforage.getItem(getStorageKey('chatMessages'));
+            return { ok: true, value: Array.isArray(value) ? value : [] };
+        } catch (e) {
+            lastError = e;
+            if (attempt < 2) {
+                await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)));
+            }
+        }
+    }
+    console.error('[loadData] 聊天记录读取失败（已重试 3 次）:', lastError);
+    return { ok: false, value: null, error: lastError };
+}
+
 const loadData = async () => {
+    _dataLoadCompleted = false;
+    _messagesSafeToPersist = false;
     try {
         settings = getDefaultSettings();
 
         // ===== 分离加载：每个数据独立读取 =====
         const [
             savedSettings,
-            savedMessages,
+            savedMessagesResult,
             savedBgGallery,
             savedCustomReplies,
             savedPokes,
@@ -360,7 +381,7 @@ const loadData = async () => {
             savedEmotionCards,
         ] = await Promise.all([
             safeLoad(getStorageKey('chatSettings'), null),
-            safeLoad(getStorageKey('chatMessages'), null),
+            _readMessagesWithRetry(),
             safeLoad(getStorageKey('backgroundGallery'), null),
             safeLoad(getStorageKey('customReplies'), null),
             safeLoad(getStorageKey('customPokes'), null),
@@ -393,11 +414,34 @@ const loadData = async () => {
         }
 
         // 加载消息
-        if (savedMessages && Array.isArray(savedMessages) && savedMessages.length > 0) {
+        const messagesReadOk = !!(savedMessagesResult && savedMessagesResult.ok);
+        const savedMessages = messagesReadOk ? savedMessagesResult.value : null;
+
+        if (!messagesReadOk) {
+            _messagesSafeToPersist = false;
+            const backup = _tryRecoverFromBackup();
+            if (backup && Array.isArray(backup.messages) && backup.messages.length > 0 &&
+                (!backup.sessionId || backup.sessionId === SESSION_ID)) {
+                messages = backup.messages.map(m => ({
+                    ...m,
+                    timestamp: new Date(m.timestamp)
+                }));
+                if (backup.settings) Object.assign(settings, backup.settings);
+                showNotification(
+                    `聊天记录读取异常，已临时显示备份中的 ${messages.length} 条消息。请刷新页面重试；本次不会覆盖已存记录`,
+                    'warning', 8000
+                );
+            } else {
+                messages = [];
+                showNotification('聊天记录读取失败，请刷新页面重试（本次不会覆盖已存记录）', 'error', 8000);
+            }
+            console.warn('[loadData] 聊天记录读取失败，已暂停写入聊天记录以保护原数据');
+        } else if (savedMessages.length > 0) {
             messages = savedMessages.map(m => ({
                 ...m,
                 timestamp: new Date(m.timestamp)
             }));
+            _messagesSafeToPersist = true;
             // ===== 🔥 修复：主存储非空但紧急备份可能有更新消息（上次关闭时异步写入未完成） =====
             try {
                 const recovered = _mergeBackupNewerMessages();
@@ -409,9 +453,10 @@ const loadData = async () => {
                 console.warn('[loadData] 合并紧急备份消息失败:', e);
             }
         } else {
-            // 尝试从备份恢复
+            _messagesSafeToPersist = true;
             const backup = _tryRecoverFromBackup();
-            if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
+            if (backup && Array.isArray(backup.messages) && backup.messages.length > 0 &&
+                (!backup.sessionId || backup.sessionId === SESSION_ID)) {
                 const timeSince = Math.round((Date.now() - backup.ts) / 60000);
                 console.warn(`[loadData] 主存储无消息，正在从备份恢复（备份时间：${timeSince} 分钟前）`);
                 messages = backup.messages.map(m => ({
@@ -424,7 +469,7 @@ const loadData = async () => {
                 }
                 setTimeout(() => saveData(), 1000);
                 showNotification(
-                    `已从备份恢复 ${messages.length} 条消息${backup._truncated ? '（备份为最近200条）' : ''}`,
+                    `已从备份恢复 ${messages.length} 条消息${backup._truncated ? `（备份只保留了最近 ${messages.length} 条）` : ''}`,
                     'warning', 6000
                 );
             } else {
@@ -568,11 +613,15 @@ if ((!savedEmojis || savedEmojis.length === 0) && customEmojis.length === 0) {
             }
         }, 100);
 
+        _dataLoadCompleted = true;
     } catch (e) {
         console.error("LoadData 内部致命错误:", e);
-        settings = getDefaultSettings();
-        messages = [];
-        updateUI();
+        if (!settings || typeof settings !== 'object' || Object.keys(settings).length === 0) {
+            settings = getDefaultSettings();
+        }
+        try { updateUI(); } catch (uiErr) { console.warn('[loadData] 出错后刷新界面失败:', uiErr); }
+    } finally {
+        _dataLoadCompleted = true;
     }
 };
 
@@ -649,6 +698,9 @@ const _BACKUP_PREFIX = 'BACKUP_V1_';
 // 保证紧急备份总能成功写入（哪怕只保留最新 1 条消息）。
 function _tryWriteBackup(backupPayload) {
     const tiers = [
+        { maxMessages: 300, withAnniversaries: true },
+        { maxMessages: 200, withAnniversaries: true },
+        { maxMessages: 150, withAnniversaries: true },
         { maxMessages: 100, withAnniversaries: true },
         { maxMessages: 50, withAnniversaries: true },
         { maxMessages: 20, withAnniversaries: true },
@@ -691,7 +743,9 @@ function _tryWriteBackup(backupPayload) {
 let _backupWarnAt = 0;
 function _backupCriticalData() {
     if (window._skipBackup) return;
+    if (!_dataLoadCompleted) return;
     if (!Array.isArray(messages)) return;
+    if (!_messagesSafeToPersist && messages.length === 0) return;
     const ok = _tryWriteBackup({
         messages: messages,
         settings: settings,
@@ -739,11 +793,10 @@ function _mergeBackupNewerMessages() {
     const newer = [];
     backup.messages.forEach(m => {
         const ts = new Date(m.timestamp).getTime();
-        if (!isFinite(ts)) return;
-        if (ts < lastSavedTs) return;
-        if (ts === lastSavedTs) {
-            if (m.id == null || existingIds.has(String(m.id))) return;
-        }
+        if (!isFinite(ts) || ts < lastSavedTs) return;
+        const key = m.id != null ? String(m.id) : 'fp:' + ts + '|' + (m.sender || '') + '|' + (m.text || '');
+        if (existingIds.has(key)) return;
+        existingIds.add(key);
         newer.push({ ...m, timestamp: new Date(m.timestamp) });
     });
 
@@ -756,6 +809,10 @@ function _mergeBackupNewerMessages() {
 const saveData = async () => {
     if (!SESSION_ID) {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存');
+        return;
+    }
+    if (!_dataLoadCompleted) {
+        console.warn('[saveData] 数据尚未加载完成，已跳过本次保存以防覆盖历史记录');
         return;
     }
 
@@ -777,7 +834,9 @@ const saveData = async () => {
 
     // 核心数据
     savePromises.push(safeStore(getStorageKey('chatSettings'), settings));
-    savePromises.push(safeStore(getStorageKey('chatMessages'), messagesToSave));
+    if (_messagesSafeToPersist) {
+        savePromises.push(safeStore(getStorageKey('chatMessages'), messagesToSave));
+    }
 
     // 回复库
     savePromises.push(safeStore(getStorageKey('customReplies'), customReplies));

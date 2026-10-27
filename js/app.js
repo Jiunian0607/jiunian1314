@@ -55,8 +55,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateLoader('正在渲染我们的世界...', '70%');
         
         await Promise.allSettled([
-            safeAwait(initializeRandomUI?.()),
-            safeAwait(initMusicPlayer?.())
+            typeof initializeRandomUI === 'function' ? safeAwait(initializeRandomUI()) : Promise.resolve(),
+            typeof initMusicPlayer === 'function' ? safeAwait(initMusicPlayer()) : Promise.resolve()
         ]);
         if (window.Moments) {
     try {
@@ -81,7 +81,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 }
 
         if (disclaimerModal) {
-            const tourSeen = await safeAwait(localforage?.getItem(APP_PREFIX + 'tour_seen'), false);
+            const tourSeen = typeof localforage !== 'undefined'
+                ? await safeAwait(localforage.getItem(APP_PREFIX + 'tour_seen'), false)
+                : false;
             
             if (!tourSeen) {
                 showModal(disclaimerModal);
@@ -181,15 +183,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
         console.error('严重初始化错误:', err);
         try {
-            const backup = typeof _tryRecoverFromBackup === 'function' ? _tryRecoverFromBackup() : null;
-            if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
-                messages = backup.messages.map(m => ({
-                    ...m,
-                    timestamp: new Date(m.timestamp)
-                }));
-                if (backup.settings) Object.assign(settings, backup.settings);
-                if (typeof updateUI === 'function') updateUI();
-                showNotification('初始化异常，已使用本地紧急备份恢复', 'warning', 5000);
+            if (!Array.isArray(messages) || messages.length === 0) {
+                const backup = typeof _tryRecoverFromBackup === 'function' ? _tryRecoverFromBackup() : null;
+                if (backup && Array.isArray(backup.messages) && backup.messages.length > 0 &&
+                    (!backup.sessionId || backup.sessionId === SESSION_ID)) {
+                    messages = backup.messages.map(m => ({
+                        ...m,
+                        timestamp: new Date(m.timestamp)
+                    }));
+                    if (backup.settings) Object.assign(settings, backup.settings);
+                    if (typeof updateUI === 'function') updateUI();
+                    showNotification('初始化异常，已使用本地紧急备份恢复', 'warning', 5000);
+                }
             }
         } catch (recoverErr) {
             console.warn('[boot] 初始化失败后的恢复也失败:', recoverErr);

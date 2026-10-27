@@ -179,7 +179,6 @@ function showReverseQuestion(askerName, question, who, onAnswer) {
 window.askMeChance = askMeChance;
 window.addAskMeBoost = addAskMeBoost;
 window.showReverseQuestion = showReverseQuestion;
-window.getAskMeBoostHint = getAskMeBoostHint;
 window.singleDecideYesNo = singleDecideYesNo;
 window.singleDecideCustom = singleDecideCustom;
 window.gcAskYesNo = gcAskYesNo;
